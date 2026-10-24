@@ -48,6 +48,7 @@ class Conexion:
         self.token_invalido = False
         self.hilo = threading.Thread(target=self._correr, daemon=True)
         self._parar = False
+        self._send_lock = asyncio.Lock()
 
     def iniciar(self) -> None:
         self.hilo.start()
@@ -86,22 +87,30 @@ class Conexion:
         if self.ws is None:
             return
         try:
-            await self.ws.send(json.dumps({"op": 3, "d": self._payload()}))
+            async with self._send_lock:
+                await self.ws.send(json.dumps({"op": 3, "d": self._payload()}))
         except websockets.ConnectionClosed:
             pass
 
-    async def _latido(self, ws: Any, intervalo: int) -> None:
+    async def _enviar_latido(self, ws: Any, secuencia: dict[str, int | None]) -> bool:
+        try:
+            async with self._send_lock:
+                await ws.send(json.dumps({"op": 1, "d": secuencia["valor"]}))
+        except websockets.ConnectionClosed:
+            return False
+        return True
+
+    async def _latido(self, ws: Any, intervalo: int, secuencia: dict[str, int | None]) -> None:
         while True:
             await asyncio.sleep(intervalo / 1000)
-            try:
-                await ws.send(json.dumps({"op": 1, "d": None}))
-            except websockets.ConnectionClosed:
+            if not await self._enviar_latido(ws, secuencia):
                 return
 
     async def _sesion(self) -> None:
         async with websockets.connect(GATEWAY, max_size=None) as ws:
             hola = json.loads(await ws.recv())
-            latido = asyncio.create_task(self._latido(ws, hola["d"]["heartbeat_interval"]))
+            secuencia: dict[str, int | None] = {"valor": None}
+            latido = asyncio.create_task(self._latido(ws, hola["d"]["heartbeat_interval"], secuencia))
             await ws.send(json.dumps({
                 "op": 2,
                 "d": {
@@ -114,6 +123,8 @@ class Conexion:
             try:
                 async for mensaje in ws:
                     datos = json.loads(mensaje)
+                    if datos.get("s") is not None:
+                        secuencia["valor"] = datos["s"]
                     evento = datos.get("t")
                     if evento == "READY":
                         self.ws = ws
@@ -125,12 +136,18 @@ class Conexion:
                         todas = next((s for s in datos["d"] if s.get("session_id") == "all"), None)
                         if todas is not None:
                             self.visibles = [a.get("type") for a in todas.get("activities", [])]
+                    elif datos.get("op") == 1:
+                        await self._enviar_latido(ws, secuencia)
                     elif datos.get("op") in (7, 9):
                         return
             finally:
                 self.ws = None
                 self.conectado = False
                 latido.cancel()
+                try:
+                    await latido
+                except asyncio.CancelledError:
+                    pass
 
     async def _bucle(self) -> None:
         espera = 2

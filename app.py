@@ -41,6 +41,7 @@ class Servicio:
         self.motor = Motor()
         self.conexion: Conexion | None = None
         self.imagenes: Imagenes | None = None
+        self.aplicar_candado = threading.Lock()
         self.usuario: dict[str, Any] | None = None
         self.compartir: bool | None = None
         self.token = self.almacen.leer_token()
@@ -65,9 +66,11 @@ class Servicio:
         self.conexion = Conexion(self.token, self._al_conectar)
         with self.candado:
             self.motor.activar(self.config["perfil_activo"], time.time())
-            self.conexion.activities = self._actividades()
+            self.conexion.activities = []
             self.conexion.punto = self.config["punto"]
+            self.ultimo_envio = 0.0
         self.conexion.iniciar()
+        self.aplicar()
         return True
 
     def _al_conectar(self) -> None:
@@ -102,21 +105,55 @@ class Servicio:
     def _revisar_compartir(self) -> None:
         self.compartir = compartir_actividad(self.token)
 
-    def _actividades(self) -> list[dict[str, Any]]:
-        if self.imagenes is None:
-            return []
-        return self.motor.actividades(self.config, self.imagenes.resolver)
-
     def aplicar(self) -> None:
+        with self.aplicar_candado:
+            self._aplicar()
+
+    def _aplicar(self) -> None:
         with self.candado:
             if self.conexion is None:
                 return
             if time.time() - self.ultimo_envio < 2:
                 self.pendiente = True
                 return
+            conexion = self.conexion
+            config = deepcopy(self.config)
+            motor = deepcopy(self.motor)
+            imagenes = self.imagenes
+
+        if imagenes is None:
+            actividades = []
+        else:
+            resolver = lambda url: imagenes.resolver(url, app_id=config["app_id"])
+            actividades = motor.actividades(config, resolver)
+
+        with self.candado:
+            motor_actual = (
+                self.motor.perfil_id,
+                self.motor.indice,
+                self.motor.inicio,
+                self.motor.ultimo_texto,
+                self.motor.ultimo_perfil,
+            )
+            motor_capturado = (
+                motor.perfil_id,
+                motor.indice,
+                motor.inicio,
+                motor.ultimo_texto,
+                motor.ultimo_perfil,
+            )
+            if (
+                self.conexion is not conexion
+                or self.imagenes is not imagenes
+                or self.config != config
+                or motor_actual != motor_capturado
+            ):
+                self.pendiente = True
+                return
+            self.motor.actividades_omitidas = motor.actividades_omitidas
             self.pendiente = False
             self.ultimo_envio = time.time()
-            self.conexion.actualizar(self._actividades(), self.config["punto"])
+            conexion.actualizar(actividades, config["punto"])
 
     def guardar_config(self) -> None:
         self.almacen.guardar(self.config)
@@ -140,6 +177,10 @@ class Servicio:
             if conexion and perfil and conexion.visibles is not None:
                 visible = TIPOS[perfil["tipo"]] in conexion.visibles
             config = deepcopy(self.config)
+            indice = self.motor.indice
+            inicio = self.motor.inicio
+            revision = self.revision
+            actividades_omitidas = self.motor.actividades_omitidas
         config.pop("subidas", None)
         usuario = None
         if self.usuario:
@@ -156,10 +197,10 @@ class Servicio:
             "visible": visible,
             "compartir": self.compartir,
             "tiene_token": bool(self.token) and not self.token_invalido and not (conexion and conexion.token_invalido),
-            "indice": self.motor.indice,
-            "inicio": self.motor.inicio,
-            "revision": self.revision,
-            "actividades_omitidas": self.motor.actividades_omitidas,
+            "indice": indice,
+            "inicio": inicio,
+            "revision": revision,
+            "actividades_omitidas": actividades_omitidas,
         }
 
 

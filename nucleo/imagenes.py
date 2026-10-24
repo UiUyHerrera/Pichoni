@@ -1,5 +1,6 @@
 import hashlib
 import threading
+from urllib.parse import urlsplit, urlunsplit
 
 import requests
 
@@ -21,18 +22,20 @@ class Imagenes:
         self.token = token
         self.app_id = app_id
         self.subidas = subidas
-        self.cache: dict[str, str] = {}
+        self.cache: dict[tuple[str, str], str] = {}
         self.candado = threading.Lock()
 
-    def resolver(self, url: str) -> str | None:
+    def resolver(self, url: str, app_id: str | None = None) -> str | None:
         if url.startswith("mp:"):
             return url
+        app_id = app_id or self.app_id
+        clave_cache = (app_id, url)
         with self.candado:
-            if url in self.cache:
-                return self.cache[url]
+            if clave_cache in self.cache:
+                return self.cache[clave_cache]
         try:
             r = requests.post(
-                f"{API}/applications/{self.app_id}/external-assets",
+                f"{API}/applications/{app_id}/external-assets",
                 headers={"Authorization": self.token},
                 json={"urls": [url]},
                 timeout=15,
@@ -41,12 +44,18 @@ class Imagenes:
             return None
         if r.status_code != 200:
             return None
-        datos = r.json()
-        if not datos or "external_asset_path" not in datos[0]:
+        try:
+            datos = r.json()
+        except ValueError:
             return None
-        imagen = "mp:" + datos[0]["external_asset_path"]
+        if not isinstance(datos, list) or not datos or not isinstance(datos[0], dict):
+            return None
+        ruta = datos[0].get("external_asset_path")
+        if not isinstance(ruta, str) or not ruta:
+            return None
+        imagen = "mp:" + ruta
         with self.candado:
-            self.cache[url] = imagen
+            self.cache[clave_cache] = imagen
         return imagen
 
     def subir(self, nombre: str, contenido: bytes) -> str:
@@ -65,13 +74,55 @@ class Imagenes:
                 files={"source": (f"imagen{extension}", contenido)},
                 timeout=60,
             )
-            url = r.json().get("image", {}).get("url", "") if r.status_code == 200 else ""
-        except (requests.RequestException, ValueError) as e:
+        except requests.RequestException as e:
             raise ErrorImagen("No se pudo subir la imagen. Revisa tu internet.") from e
-        if not url.startswith("https://"):
-            raise ErrorImagen("El servidor de imágenes rechazó la subida.")
+
+        try:
+            respuesta = r.json()
+        except ValueError as e:
+            if r.status_code != 200:
+                raise ErrorImagen(f"Freeimage.host respondió con HTTP {r.status_code}.") from e
+            raise ErrorImagen("Freeimage.host devolvió una respuesta inválida.") from e
+        if not isinstance(respuesta, dict):
+            raise ErrorImagen("Freeimage.host devolvió una respuesta inválida.")
+
+        codigo = respuesta.get("status_code")
+        if r.status_code != 200 or codigo not in (None, 200):
+            detalle = self._detalle_error(respuesta, r.status_code, codigo)
+            raise ErrorImagen(f"Freeimage.host rechazó la subida: {detalle}")
+
+        imagen = respuesta.get("image")
+        url = imagen.get("url", "") if isinstance(imagen, dict) else ""
+        url = url.strip() if isinstance(url, str) else ""
+        try:
+            partes = urlsplit(url)
+            hostname = partes.hostname
+        except ValueError as e:
+            raise ErrorImagen("Freeimage.host devolvió un enlace de imagen inválido.") from e
+        if partes.scheme.lower() == "http" and hostname in ("freeimage.host", "www.freeimage.host"):
+            url = urlunsplit(("https", partes.netloc, partes.path, partes.query, partes.fragment))
+            partes = urlsplit(url)
+            hostname = partes.hostname
+        if partes.scheme.lower() != "https" or not hostname:
+            raise ErrorImagen("Freeimage.host no devolvió un enlace HTTPS válido.")
+
         self.subidas[huella] = url
         return url
+
+    @staticmethod
+    def _detalle_error(respuesta: dict, http_status: int, api_status: object) -> str:
+        error = respuesta.get("error")
+        if isinstance(error, dict):
+            detalle = error.get("message") or error.get("text")
+        elif isinstance(error, str):
+            detalle = error
+        else:
+            detalle = None
+        detalle = detalle or respuesta.get("status_txt")
+        if not isinstance(detalle, str) or not detalle.strip() or detalle.strip().upper() == "OK":
+            codigo = api_status if api_status is not None else http_status
+            detalle = f"código {codigo}"
+        return " ".join(detalle.split())[:180]
 
     def necesita_rehospedar(self, url: str) -> bool:
         return any(f"//{dominio}/" in url for dominio in BLOQUEADOS)

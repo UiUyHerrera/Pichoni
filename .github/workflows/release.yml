@@ -18,11 +18,14 @@ jobs:
           python-version: "3.12"
       - name: Set release version
         shell: pwsh
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          $version = "${{ github.ref_name }}".TrimStart("v")
-          if ($version -notmatch '^\d+\.\d+\.\d+$') {
+          $tagMatch = [regex]::Match($env:RELEASE_TAG, '^v(\d+\.\d+\.\d+)$')
+          if (-not $tagMatch.Success) {
             throw "Release tags must use vMAJOR.MINOR.PATCH."
           }
+          $version = $tagMatch.Groups[1].Value
           $file = "nucleo/version.py"
           $source = Get-Content -Raw -LiteralPath $file
           $source = $source -replace 'VERSION = "[^"]+"', "VERSION = `"$version`""
@@ -38,8 +41,14 @@ jobs:
         run: choco install innosetup --yes --no-progress
       - name: Build installer
         shell: pwsh
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          $version = "${{ github.ref_name }}".TrimStart("v")
+          $tagMatch = [regex]::Match($env:RELEASE_TAG, '^v(\d+\.\d+\.\d+)$')
+          if (-not $tagMatch.Success) {
+            throw "Release tags must use vMAJOR.MINOR.PATCH."
+          }
+          $version = $tagMatch.Groups[1].Value
           $compiler = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
           if (-not (Test-Path -LiteralPath $compiler)) {
             $compiler = "$env:ProgramFiles\Inno Setup 6\ISCC.exe"
