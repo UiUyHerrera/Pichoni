@@ -1,0 +1,14 @@
+__pycache__/
+.pytest_cache/
+.venv/
+.env
+.env.*
+config.json
+token.txt
+estados.json
+*.roto.json
+*.log
+*.tmp
+build/
+dist/
+*.spec

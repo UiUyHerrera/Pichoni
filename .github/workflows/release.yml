@@ -1,0 +1,58 @@
+name: Build and publish Pichoni
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Set release version
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}".TrimStart("v")
+          if ($version -notmatch '^\d+\.\d+\.\d+$') {
+            throw "Release tags must use vMAJOR.MINOR.PATCH."
+          }
+          $file = "nucleo/version.py"
+          $source = Get-Content -Raw -LiteralPath $file
+          $source = $source -replace 'VERSION = "[^"]+"', "VERSION = `"$version`""
+          Set-Content -LiteralPath $file -Value $source -NoNewline -Encoding utf8
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt pyinstaller
+      - name: Build Pichoni
+        run: >-
+          pyinstaller --noconfirm --clean --onefile --windowed
+          --name Pichoni --icon ui/icono.ico --add-data "ui;ui"
+          --collect-all webview --hidden-import webview.platforms.edgechromium app.py
+      - name: Install Inno Setup
+        run: choco install innosetup --yes --no-progress
+      - name: Build installer
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}".TrimStart("v")
+          $compiler = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path -LiteralPath $compiler)) {
+            $compiler = "$env:ProgramFiles\Inno Setup 6\ISCC.exe"
+          }
+          if (-not (Test-Path -LiteralPath $compiler)) {
+            throw "Inno Setup compiler was not installed."
+          }
+          & $compiler "/DAppVersion=$version" "installer\Pichoni.iss"
+          if ($LASTEXITCODE -ne 0) {
+            throw "Inno Setup failed with exit code $LASTEXITCODE."
+          }
+      - name: Publish release installer
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: dist/Pichoni-Setup-*.exe
