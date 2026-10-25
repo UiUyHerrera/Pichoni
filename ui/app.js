@@ -960,7 +960,7 @@
     return [
       barra(h("span", { text: "Ajustes" })),
       h("div", { class: "pagina" },
-        ...seccion(null, cuenta, "Al cerrar la ventana la app sigue en la bandeja, junto al reloj. Para salir usa clic derecho en su ícono."),
+        ...seccion(null, cuenta, "Cerrar la ventana sale de Pichoni y quita su actividad. Minimizar la deja en la bandeja junto al reloj."),
         ...seccion("Apariencia", tema, "El tema se guarda en este PC y puedes cambiarlo cuando quieras."),
         ...seccion("Avanzado", avanzado, "Discord necesita una app para mostrar imágenes y botones. Si aparece el nombre de otra app, crea la tuya en discord.com/developers y pega su ID."),
         ...seccion("Actualizaciones", actualizaciones, "Consulta las versiones y descarga el instalador oficial de Pichoni."),
@@ -1292,12 +1292,17 @@
 
   function iniciar() {
     api = window.pywebview.api;
+    api.iniciar_actualizacion_automatica().catch(() => {
+      toast("No se pudo comprobar la actualización automática", true);
+    });
     api.estado().then((e) => {
       aplicarTema(e.config.tema);
       if (e.tiene_token) arrancar(e);
       else { estado = e; config = e.config; mostrarBienvenida(true); }
     });
   }
+
+  window.notificarActualizacionAutomatica = (mensaje) => toast(mensaje);
 
   function pintarMaximizado(max) {
     const b = $("c-max");

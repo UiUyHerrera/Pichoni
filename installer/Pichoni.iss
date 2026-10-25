@@ -34,4 +34,4 @@ Name: "{autoprograms}\Pichoni"; Filename: "{app}\Pichoni.exe"; IconFilename: "{a
 Name: "{autodesktop}\Pichoni"; Filename: "{app}\Pichoni.exe"; IconFilename: "{app}\Pichoni.exe"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\Pichoni.exe"; Description: "Abrir Pichoni"; Flags: postinstall nowait skipifsilent
+Filename: "{app}\Pichoni.exe"; Description: "Abrir Pichoni"; Flags: postinstall nowait

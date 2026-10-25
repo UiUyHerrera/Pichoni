@@ -1,5 +1,8 @@
 import base64
+import json
+import os
 import shutil
+import subprocess
 import sys
 import threading
 import time
@@ -15,6 +18,7 @@ import webview
 from PIL import Image
 
 from nucleo import sistema
+from nucleo.actualizador import ErrorActualizacion, descargar_instalador
 from nucleo.config import TIPOS, Almacen, normalizar
 from nucleo.gateway import Conexion, compartir_actividad, obtener_usuario
 from nucleo.imagenes import ErrorImagen, Imagenes
@@ -210,6 +214,8 @@ class Api:
         self._ventana: Any = None
         self._bandeja: Any = None
         self._maximizada = False
+        self._actualizacion_candado = threading.Lock()
+        self._actualizacion_iniciada = False
 
     def estado(self) -> dict[str, Any]:
         return self._s.estado()
@@ -241,22 +247,72 @@ class Api:
             return {"estado": "error"}
         instalador = next(
             (
-                asset.get("browser_download_url")
+                asset
                 for asset in assets
                 if isinstance(asset, dict)
-                and isinstance(asset.get("name"), str)
-                and asset["name"].startswith("Pichoni-Setup-")
-                and asset["name"].endswith(".exe")
-                and isinstance(asset.get("browser_download_url"), str)
+                and asset.get("name") == f"Pichoni-Setup-{version}.exe"
             ),
-            PAGINA_VERSIONES,
+            None,
         )
         return {
             "estado": "disponible" if es_version_nueva(version) else "actualizada",
             "actual": VERSION,
             "disponible": version,
-            "url": instalador,
+            "url": instalador.get("browser_download_url", PAGINA_VERSIONES) if instalador else PAGINA_VERSIONES,
+            "digest": instalador.get("digest") if instalador else None,
+            "tamano": instalador.get("size") if instalador else None,
         }
+
+    def iniciar_actualizacion_automatica(self) -> dict[str, str]:
+        instalacion = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "Programs" / "Pichoni"
+        if not getattr(sys, "frozen", False) or Path(sys.executable).resolve().parent != instalacion.resolve():
+            return {"estado": "no_aplica"}
+        with self._actualizacion_candado:
+            if self._actualizacion_iniciada:
+                return {"estado": "buscando"}
+            self._actualizacion_iniciada = True
+        threading.Thread(target=self._actualizar_automaticamente, daemon=True).start()
+        return {"estado": "buscando"}
+
+    def _actualizar_automaticamente(self) -> None:
+        actualizacion = self.comprobar_actualizacion()
+        if actualizacion.get("estado") != "disponible":
+            return
+        version = actualizacion.get("disponible")
+        digest = actualizacion.get("digest")
+        tamano = actualizacion.get("tamano")
+        url = actualizacion.get("url")
+        if not all(isinstance(valor, str) for valor in (version, digest, url)) or not isinstance(tamano, int):
+            self._notificar_actualizacion("No se pudo verificar la actualización. Revisa Ajustes > Actualizaciones.")
+            return
+        try:
+            instalador = descargar_instalador(url, version, tamano, digest)
+            subprocess.Popen(
+                [
+                    str(instalador),
+                    "/VERYSILENT",
+                    "/SUPPRESSMSGBOXES",
+                    "/NORESTART",
+                    "/SP-",
+                ],
+                close_fds=True,
+                creationflags=getattr(subprocess, "DETACHED_PROCESS", 0)
+                | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0),
+            )
+        except (ErrorActualizacion, OSError, subprocess.SubprocessError):
+            self._notificar_actualizacion("No se pudo instalar automáticamente. Puedes actualizar desde Ajustes.")
+            return
+        self._notificar_actualizacion(f"Instalando Pichoni {version}…")
+        time.sleep(1)
+        if self._bandeja:
+            self._bandeja.salir()
+
+    def _notificar_actualizacion(self, mensaje: str) -> None:
+        if self._ventana:
+            self._ventana.evaluate_js(
+                "window.notificarActualizacionAutomatica && "
+                f"window.notificarActualizacionAutomatica({json.dumps(mensaje)})"
+            )
 
     def abrir_pagina_descargas(self, url: str | None = None) -> bool:
         destino = PAGINA_VERSIONES
@@ -333,7 +389,9 @@ class Api:
 
     def cerrar(self) -> None:
         if self._bandeja:
-            self._bandeja.ocultar()
+            self._bandeja.salir()
+        elif self._ventana:
+            self._ventana.destroy()
 
     def activar_compartir(self) -> dict[str, Any]:
         resultado = compartir_actividad(self._s.token, True)
@@ -382,7 +440,7 @@ class Bandeja:
         self.ventana = ventana
         self.servicio = servicio
         self.saliendo = False
-        self.avisado = False
+        self._salida_candado = threading.Lock()
         menu = pystray.Menu(
             pystray.MenuItem("Abrir", self.abrir, default=True),
             pystray.MenuItem("Quitar actividad", self.quitar),
@@ -404,10 +462,6 @@ class Bandeja:
             "window.iniciarAnimacionApertura && window.iniciarAnimacionApertura()"
         )
 
-    def ocultar(self) -> None:
-        if not self.saliendo:
-            self.ventana.hide()
-
     def quitar(self, *_: Any) -> None:
         with self.servicio.candado:
             self.servicio.config["perfil_activo"] = None
@@ -417,7 +471,10 @@ class Bandeja:
         self.servicio.aplicar()
 
     def salir(self, *_: Any) -> None:
-        self.saliendo = True
+        with self._salida_candado:
+            if self.saliendo:
+                return
+            self.saliendo = True
         self.icono.stop()
         if self.servicio.conexion:
             self.servicio.conexion.detener()
@@ -429,13 +486,7 @@ class Bandeja:
         self.ventana.evaluate_js(
             "window.iniciarAnimacionCierre && window.iniciarAnimacionCierre()"
         )
-        threading.Timer(0.85, self.ocultar).start()
-        if not self.avisado:
-            self.avisado = True
-            try:
-                self.icono.notify("Sigue activo en la bandeja. Clic derecho en el ícono para salir.", "Pichoni")
-            except NotImplementedError:
-                pass
+        threading.Timer(0.85, self.salir).start()
         return False
 
 
