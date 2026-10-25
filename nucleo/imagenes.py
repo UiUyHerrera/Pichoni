@@ -1,8 +1,11 @@
+import io
 import hashlib
+import math
 import threading
 from urllib.parse import urlsplit, urlunsplit
 
 import requests
+from PIL import Image, ImageOps, ImageSequence, UnidentifiedImageError
 
 API = "https://discord.com/api/v9"
 HOST = "https://freeimage.host/api/1/upload"
@@ -11,6 +14,9 @@ BLOQUEADOS = ("files.catbox.moe", "litter.catbox.moe")
 NAVEGADOR = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36"}
 MAX_BYTES = 10 * 1024 * 1024
 EXTENSIONES = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
+TAMANO_ASSET = 512
+MAX_DIMENSION = 8192
+MAX_FOTOGRAMAS_GIF = 120
 
 
 class ErrorImagen(Exception):
@@ -58,12 +64,16 @@ class Imagenes:
             self.cache[clave_cache] = imagen
         return imagen
 
-    def subir(self, nombre: str, contenido: bytes) -> str:
+    def subir(self, nombre: str, contenido: bytes, recorte: dict | None = None) -> str:
         extension = "." + nombre.rsplit(".", 1)[-1].lower() if "." in nombre else ""
         if extension not in EXTENSIONES:
             raise ErrorImagen("Formato no soportado. Usa PNG, JPG, GIF o WEBP.")
         if len(contenido) > MAX_BYTES:
             raise ErrorImagen("La imagen pesa más de 10 MB.")
+        if recorte is not None:
+            contenido = self._recortar(extension, contenido, recorte)
+            if len(contenido) > MAX_BYTES:
+                raise ErrorImagen("La imagen editada pesa más de 10 MB.")
         huella = hashlib.sha256(contenido).hexdigest()
         if huella in self.subidas and not self.necesita_rehospedar(self.subidas[huella]):
             return self.subidas[huella]
@@ -108,6 +118,99 @@ class Imagenes:
 
         self.subidas[huella] = url
         return url
+
+    @staticmethod
+    def _recortar(extension: str, contenido: bytes, recorte: dict) -> bytes:
+        try:
+            x = float(recorte["x"])
+            y = float(recorte["y"])
+            ancho = float(recorte["ancho"])
+            alto = float(recorte["alto"])
+        except (KeyError, TypeError, ValueError) as error:
+            raise ErrorImagen("No se pudo aplicar el encuadre de la imagen.") from error
+        if (
+            not all(math.isfinite(valor) for valor in (x, y, ancho, alto))
+            or x < 0 or y < 0 or ancho <= 0 or alto <= 0
+            or x + ancho > 1.0001 or y + alto > 1.0001
+        ):
+            raise ErrorImagen("El encuadre de la imagen no es válido.")
+        try:
+            original = Image.open(io.BytesIO(contenido))
+            formato_esperado = {
+                ".jpg": "JPEG", ".jpeg": "JPEG", ".png": "PNG", ".gif": "GIF", ".webp": "WEBP"
+            }[extension]
+            if original.format != formato_esperado:
+                raise ErrorImagen("La extensión del archivo no coincide con el formato de la imagen.")
+            if original.width > MAX_DIMENSION or original.height > MAX_DIMENSION:
+                raise ErrorImagen("La imagen es demasiado grande para encuadrarla (máximo 8192 × 8192).")
+            if original.format == "GIF" and getattr(original, "n_frames", 1) > MAX_FOTOGRAMAS_GIF:
+                raise ErrorImagen(f"El GIF tiene demasiados fotogramas (máximo {MAX_FOTOGRAMAS_GIF}).")
+            if original.width * original.height * getattr(original, "n_frames", 1) > 100_000_000:
+                raise ErrorImagen("La imagen animada es demasiado grande para encuadrarla.")
+
+            ancho_px = round(ancho * original.width)
+            alto_px = round(alto * original.height)
+            if abs(ancho_px - alto_px) > max(2, round(max(ancho_px, alto_px) * 0.005)):
+                raise ErrorImagen("El encuadre de la imagen debe ser cuadrado.")
+            lado = max(1, min(ancho_px, alto_px))
+            left = round(x * original.width)
+            top = round(y * original.height)
+            left = min(left, original.width - lado)
+            top = min(top, original.height - lado)
+            caja = (left, top, left + lado, top + lado)
+
+            if original.format == "GIF":
+                fotogramas = []
+                duraciones = []
+                for fotograma in ImageSequence.Iterator(original):
+                    fotograma = fotograma.convert("RGBA").crop(caja)
+                    fotogramas.append(fotograma.resize(
+                        (TAMANO_ASSET, TAMANO_ASSET), Image.Resampling.LANCZOS
+                    ))
+                    duraciones.append(fotograma.info.get("duration", original.info.get("duration", 100)))
+                salida = io.BytesIO()
+                fotogramas[0].save(
+                    salida,
+                    format="GIF",
+                    save_all=True,
+                    append_images=fotogramas[1:],
+                    duration=duraciones,
+                    loop=original.info.get("loop", 0),
+                    disposal=2,
+                    optimize=True,
+                )
+                return salida.getvalue()
+
+            imagen = ImageOps.exif_transpose(original)
+            ancho_px = round(ancho * imagen.width)
+            alto_px = round(alto * imagen.height)
+            if abs(ancho_px - alto_px) > max(2, round(max(ancho_px, alto_px) * 0.005)):
+                raise ErrorImagen("El encuadre de la imagen debe ser cuadrado.")
+            lado = max(1, min(ancho_px, alto_px))
+            left = round(x * imagen.width)
+            top = round(y * imagen.height)
+            left = min(left, imagen.width - lado)
+            top = min(top, imagen.height - lado)
+            imagen = imagen.crop((left, top, left + lado, top + lado)).resize(
+                (TAMANO_ASSET, TAMANO_ASSET), Image.Resampling.LANCZOS
+            )
+            if extension in (".jpg", ".jpeg"):
+                imagen = imagen.convert("RGB")
+            elif extension == ".png":
+                imagen = imagen.convert("RGBA")
+            salida = io.BytesIO()
+            imagen.save(salida, format=formato_esperado)
+            return salida.getvalue()
+        except ErrorImagen:
+            raise
+        except (
+            OSError,
+            ValueError,
+            Image.DecompressionBombError,
+            Image.DecompressionBombWarning,
+            UnidentifiedImageError,
+        ) as error:
+            raise ErrorImagen("No se pudo procesar esta imagen.") from error
 
     @staticmethod
     def _detalle_error(respuesta: dict, http_status: int, api_status: object) -> str:

@@ -6,6 +6,7 @@
     ["transmitiendo", "Stream", "Transmitiendo"],
     ["compitiendo", "Compitiendo", "Compitiendo en"]
   ];
+  const TIPOS_RPC = new Set(["jugando", "escuchando", "viendo", "compitiendo"]);
   const NOMBRE_TIPO = Object.fromEntries(TIPOS.map((t) => [t[0], t[1]]));
   const KICKER = Object.fromEntries(TIPOS.map((t) => [t[0], t[2]]));
   const PUNTOS = [
@@ -17,11 +18,6 @@
   const MAX_TEXTO = 128;
   const MAX_ACTIVIDADES = 5;
   const MAX_TIEMPO_MINUTOS = 444 * 525600;
-  const TEMAS = [
-    ["pichoni", "Pichoni", "#8b5cf6"],
-    ["discord", "Discord", "#5865f2"],
-    ["claro", "Claro", "#7650c9"]
-  ];
   const AYUDA_TIEMPO = {
     ninguno: "Sin contador en Discord.",
     transcurrido: "Cuenta desde que activas el perfil.",
@@ -84,7 +80,6 @@
       nombre: "",
       detalles: [""],
       texto: [""],
-      rotar_cada: 30,
       url: "",
       imagen: { url: "", texto: "" },
       imagen_chica: { url: "", texto: "" },
@@ -101,13 +96,10 @@
     return lista.filter((t) => t.trim());
   }
 
-  function rota(p) {
-    return validos(p.detalles).length > 1 || validos(p.texto).length > 1;
-  }
-
   function toast(texto, error) {
     const t = $("toast");
-    t.textContent = texto;
+    t.replaceChildren();
+    t.append(document.createTextNode(texto));
     t.classList.toggle("error", !!error);
     t.classList.add("show");
     clearTimeout(toast.t);
@@ -143,23 +135,51 @@
 
   function pintarCuenta() {
     const u = estado && estado.usuario;
-    $("usuario").textContent = u ? u.nombre : "Sin conectar";
-    if (u && $("avatar").getAttribute("src") !== u.avatar) {
-      $("avatar").src = u.avatar;
-      $("avatar").alt = "Foto de perfil de " + u.nombre;
+    const modoRpc = estado && estado.modo_conexion === "rpc";
+    $("usuario").textContent = u ? u.nombre : modoRpc ? "Discord de escritorio" : "Sin conectar";
+    const avatar = $("avatar");
+    if (u) {
+      avatar.alt = "Foto de perfil de " + u.nombre;
+      avatar.title = "Foto de perfil de " + u.nombre;
+      if (avatar.dataset.avatarUrl !== u.avatar) {
+        avatar.dataset.avatarUrl = u.avatar;
+        avatar.onerror = () => {
+          avatar.onerror = null;
+          avatar.src = "icono.png";
+        };
+        avatar.src = u.avatar;
+      }
+    } else if (modoRpc) {
+      avatar.onerror = null;
+      delete avatar.dataset.avatarUrl;
+      avatar.src = "icono.png";
+      avatar.alt = "RPC no comparte el avatar de Discord";
+      avatar.title = "Discord RPC no comparte tu foto de perfil. Usa el modo con token para verla.";
+    } else if (!u) {
+      avatar.onerror = null;
+      delete avatar.dataset.avatarUrl;
+      avatar.src = "icono.png";
+      avatar.alt = "";
+      avatar.title = "";
     }
     const c = $("conexion");
     const conectado = estado && estado.conectado;
-    c.textContent = !estado || !estado.tiene_token ? "Falta el token" : conectado ? "Conectado" : "Conectando…";
+    c.textContent = !estado
+      ? "Sin conectar"
+      : modoRpc
+        ? conectado ? "Conectado sin token" : estado.error_conexion ? "Discord no disponible" : "Buscando Discord…"
+        : !estado.tiene_token ? "Falta el token" : conectado ? "Conectado" : "Conectando…";
+    c.title = estado && estado.error_conexion ? estado.error_conexion : "";
     c.classList.toggle("on", !!conectado);
     const punto = PUNTOS.find((x) => x[0] === config.punto);
-    $("avatar-dot").style.background = punto ? punto[3] : "var(--dot-invisible)";
-    $("insignia-rotacion").classList.toggle("hidden", !config.rotar_perfiles.activo);
+    $("avatar-dot").classList.toggle("hidden", !!modoRpc);
+    if (!modoRpc) $("avatar-dot").style.background = punto ? punto[3] : "var(--dot-invisible)";
     $("banner").classList.toggle("hidden", !(estado && estado.compartir === false && config.perfil_activo));
   }
 
   function pintarPerfiles() {
     const lista = $("perfiles");
+    const perfiles = perfilesVisibles();
     // Discord only shows one activity per type, so later active profiles of a repeated type stay hidden.
     const tiposVistos = new Set();
     const repetidos = new Set();
@@ -169,7 +189,7 @@
       if (tiposVistos.has(p.tipo)) repetidos.add(id);
       tiposVistos.add(p.tipo);
     }
-    lista.replaceChildren(...config.perfiles.map((p) => {
+    lista.replaceChildren(...perfiles.map((p) => {
       const seleccionado = vista.tipo === "perfil" && vista.id === p.id;
       const activo = encendido(p.id);
       const repetido = repetidos.has(p.id);
@@ -299,12 +319,15 @@
     const cont = $("contenido");
     preview = null;
     if (vista.tipo === "perfil") {
-      const p = perfil(vista.id) || config.perfiles[0];
+      const visibles = perfilesVisibles();
+      const p = visibles.find((x) => x.id === vista.id) || visibles[0];
       if (!p) {
         cont.replaceChildren(h("div", { class: "vacio" },
           icono("jugando"),
           h("h2", { text: "Sin perfiles" }),
-          h("p", { text: "Crea un perfil para mostrar una actividad en Discord." }),
+          h("p", { text: estado && estado.modo_conexion === "rpc"
+            ? "Crea un perfil Jugando, Escuchando, Viendo o Compitiendo. Los perfiles no compatibles se conservan para el modo avanzado."
+            : "Crea un perfil para mostrar una actividad en Discord." }),
           h("button", { type: "button", class: "btn btn-primario btn-grande", onclick: crearPerfil }, icono("mas"), "Nuevo perfil")
         ));
         return;
@@ -315,18 +338,33 @@
       actualizarPreview();
     } else if (vista.tipo === "estado") {
       cont.replaceChildren(...vistaEstado());
-    } else if (vista.tipo === "rotacion") {
-      cont.replaceChildren(...vistaRotacion());
     } else {
       cont.replaceChildren(...vistaAjustes());
     }
   }
 
   function encendido(id) {
+    if (estado && estado.modo_conexion === "rpc") return config.perfil_activo === id;
     return config.perfil_activo === id || (!!config.perfil_activo && (config.perfiles_extra || []).includes(id));
   }
 
+  function perfilesVisibles() {
+    return estado && estado.modo_conexion === "rpc"
+      ? config.perfiles.filter((p) => TIPOS_RPC.has(p.tipo))
+      : config.perfiles;
+  }
+
+  function perfilInicial() {
+    const visibles = perfilesVisibles();
+    const activo = visibles.find((p) => p.id === config.perfil_activo);
+    return activo || visibles[0] || null;
+  }
+
   function perfilesActivos() {
+    if (estado && estado.modo_conexion === "rpc") {
+      const principal = perfil(config.perfil_activo);
+      return principal && TIPOS_RPC.has(principal.tipo) ? [principal] : [];
+    }
     const ids = config.perfil_activo
       ? [config.perfil_activo, ...(config.perfiles_extra || [])]
       : [];
@@ -370,6 +408,7 @@
   }
 
   function vistaPerfil(p) {
+    const modoRpc = estado && estado.modo_conexion === "rpc";
     const inicioTiempo = encendido(p.id) && estado && estado.inicio ? estado.inicio * 1000 : Date.now();
     const limiteTiempo = Math.min(MAX_TIEMPO_MINUTOS, Math.max(1, Math.floor(inicioTiempo / 60000)));
     const titulo = h("input", {
@@ -386,10 +425,14 @@
     );
 
     const vp = construirPreview();
-    const estadoLimite = h("p", { class: "seccion-pie limite-actividades", text: resumenLimiteActividades() });
+    const estadoLimite = h("p", {
+      class: "seccion-pie limite-actividades",
+      text: modoRpc ? "RPC publica un solo perfil compatible a la vez." : resumenLimiteActividades()
+    });
 
+    const tiposDisponibles = modoRpc ? TIPOS.filter((t) => TIPOS_RPC.has(t[0])) : TIPOS;
     const tipo = seccion("Tipo de actividad",
-      segmentado(TIPOS.map((t) => [t[0], t[1], t[0]]), p.tipo, "Tipo de actividad", (v) => {
+      segmentado(tiposDisponibles.map((t) => [t[0], t[1], t[0]]), p.tipo, "Tipo de actividad", (v) => {
         const conflicto = encendido(p.id)
           ? perfilesActivos().find((x) => x.id !== p.id && x.tipo === v)
           : null;
@@ -403,12 +446,7 @@
           } else {
             config.perfiles_extra = (config.perfiles_extra || []).filter((id) => id !== conflicto.id);
           }
-          if (config.rotar_perfiles.activo && config.rotar_perfiles.ids.includes(conflicto.id)) {
-            config.rotar_perfiles.activo = false;
-            toast("Reemplacé el perfil del mismo tipo y pausé la rotación", true);
-          } else {
-            toast("Discord muestra uno por tipo: reemplacé el perfil anterior");
-          }
+          toast("Discord muestra uno por tipo: reemplacé el perfil anterior");
         }
         p.tipo = v;
         if (v === "transmitiendo") p.tiempo.modo = "ninguno";
@@ -479,8 +517,10 @@
           : null),
         p.tipo === "transmitiendo" ? aviso : null,
         ...seccion("Textos", textos, "Agrega varios textos y van cambiando solos. Discord pide mínimo 15 segundos entre cambios."),
-        ...seccion("Imágenes", imagenes, "Arrastra una imagen, elígela o pega un link. Las imágenes de tu PC se suben a freeimage.host."),
-        ...seccion("Botones", botones, p.tipo === "transmitiendo"
+        ...seccion("Imágenes", imagenes, "Arrastra una imagen, elígela o pega un link. Al elegir un archivo puedes ajustar el encuadre cuadrado antes de subirlo; los GIF conservan su animación."),
+        ...seccion("Botones", botones, modoRpc
+          ? "RPC admite hasta dos botones con enlaces HTTPS."
+          : p.tipo === "transmitiendo"
           ? "Puedes agregar hasta 2 botones propios; aparecen además del botón “Ver” obligatorio de Discord."
           : "Hasta 2 botones con link. Tú no los ves en tu perfil, los demás sí."),
         ...seccion("Tiempo", tiempo, p.tipo === "transmitiendo"
@@ -494,39 +534,17 @@
     const partes = [];
     [["detalles", "Primera línea"], ["texto", "Segunda línea"]].forEach(([clave, nombre]) => {
       partes.push(h("div", { class: "subtitulo-lista", text: nombre }));
-      p[clave].forEach((valor, i) => {
-        const id = "t-" + clave + "-" + i;
-        const cuenta = h("span", { class: "contador", text: valor.length + "/" + MAX_TEXTO });
-        partes.push(h("div", { class: "fila izq" },
-          entrada({ id, value: valor, maxlength: MAX_TEXTO, placeholder: i ? "Otro texto" : "Opcional", "aria-label": nombre + " " + (i + 1) }, (v) => {
-            p[clave][i] = v;
-            cuenta.textContent = v.length + "/" + MAX_TEXTO;
-            cambio();
-            pintarRotacionTextos(p);
-          }),
-          cuenta,
-          p[clave].length > 1 ? h("button", {
-            type: "button", class: "quitar", "aria-label": "Quitar texto",
-            onclick: () => { p[clave].splice(i, 1); guardarPronto(); repintarTextos(p); }
-          }, icono("menos")) : null
-        ));
-      });
-      if (p[clave].length < 20) {
-        partes.push(h("button", {
-          type: "button", class: "agregar",
-          onclick: () => {
-            p[clave].push("");
-            repintarTextos(p);
-            const campos = document.querySelectorAll('[id^="t-' + clave + '-"]');
-            campos[campos.length - 1].focus();
-          }
-        }, icono("mas"), "Agregar texto"));
-      }
+      const valor = p[clave][0] || "";
+      const cuenta = h("span", { class: "contador", text: valor.length + "/" + MAX_TEXTO });
+      partes.push(h("div", { class: "fila izq" },
+        entrada({ id: "t-" + clave + "-0", value: valor, maxlength: MAX_TEXTO, placeholder: "Opcional", "aria-label": nombre }, (v) => {
+          p[clave][0] = v;
+          cuenta.textContent = v.length + "/" + MAX_TEXTO;
+          cambio();
+        }),
+        cuenta
+      ));
     });
-    partes.push(h("div", { class: "fila" + (rota(p) ? "" : " hidden"), id: "fila-rotar" },
-      h("label", { for: "f-rotar", text: "Cambiar cada" }),
-      paso("f-rotar", p.rotar_cada, 15, 3600, "segundos", (n) => { p.rotar_cada = n; cambio(); })
-    ));
     return partes;
   }
 
@@ -538,16 +556,6 @@
       ? "Discord agrega el botón “Ver” y usa este enlace como destino. No se puede quitar ni cambiar el texto manteniendo Transmitiendo. Los botones personalizados se muestran aparte."
       : "Para transmitir sin enviar a la gente a un canal genérico, pega un enlace real de Twitch o YouTube: Discord necesita un destino para el botón “Ver”. Sin un enlace válido, Pichoni no publicará este perfil. Los botones personalizados se muestran aparte.";
     a.classList.toggle("hidden", valido && !!p.url);
-  }
-
-  function repintarTextos(p) {
-    $("grupo-textos").replaceChildren(...listaTextos(p));
-    actualizarPreview();
-  }
-
-  function pintarRotacionTextos(p) {
-    const f = $("fila-rotar");
-    if (f) f.classList.toggle("hidden", !rota(p));
   }
 
   function cambio() {
@@ -603,19 +611,198 @@
       }).catch(() => toast("No se pudo subir la imagen", true)).finally(() => capa.remove());
     }
 
+    function editarEncuadre(nombre, datosArchivo) {
+      const ventana = h("div", { class: "recorte-editor" });
+      const imagen = h("img", { alt: "Imagen original para encuadrar" });
+      const miniatura = h("img", { alt: "" });
+      const imagenBase = p.imagen.url
+        ? h("img", { alt: "", referrerpolicy: "no-referrer" })
+        : h("div", { class: "recorte-discord-respaldo" }, icono("foto"));
+      const visor = h("div", {
+        class: "recorte-visor",
+        role: "img",
+        tabindex: "0",
+        "aria-label": "Encuadre de imagen. Arrastra para moverla o usa las flechas del teclado."
+      }, imagen);
+      const visorChico = h("div", { class: "recorte-visor recorte-visor-chico", "aria-hidden": "true" }, miniatura);
+      const muestraDiscord = h("div", { class: "recorte-discord-muestra", "aria-label": "Así se superpone la imagen chica en Discord" },
+        imagenBase,
+        visorChico
+      );
+      const zoom = h("input", {
+        class: "recorte-zoom",
+        type: "range",
+        min: "1",
+        max: "3",
+        step: "0.01",
+        value: "1",
+        "aria-label": "Zoom de la imagen"
+      });
+      const error = h("p", { class: "error", role: "alert" });
+      let escalaBase = 1;
+      let escala = 1;
+      let x = 0;
+      let y = 0;
+      let arrastre = null;
+      let imagenLista = false;
+
+      function ajustarLimites() {
+        const ancho = imagen.naturalWidth * escalaBase * escala;
+        const alto = imagen.naturalHeight * escalaBase * escala;
+        const lado = visor.clientWidth;
+        x = Math.min(0, Math.max(lado - ancho, x));
+        y = Math.min(0, Math.max(lado - alto, y));
+        imagen.style.width = miniatura.style.width = ancho + "px";
+        imagen.style.height = miniatura.style.height = alto + "px";
+        imagen.style.left = x + "px";
+        imagen.style.top = y + "px";
+        const proporcion = visorChico.clientWidth / lado;
+        miniatura.style.width = ancho * proporcion + "px";
+        miniatura.style.height = alto * proporcion + "px";
+        miniatura.style.left = x * proporcion + "px";
+        miniatura.style.top = y * proporcion + "px";
+      }
+
+      function cambiarZoom(valor) {
+        const lado = visor.clientWidth;
+        const centroX = (lado / 2 - x) / (escalaBase * escala);
+        const centroY = (lado / 2 - y) / (escalaBase * escala);
+        escala = Number(valor);
+        x = lado / 2 - centroX * escalaBase * escala;
+        y = lado / 2 - centroY * escalaBase * escala;
+        ajustarLimites();
+      }
+
+      function recorteActual() {
+        const factor = escalaBase * escala;
+        const lado = visor.clientWidth;
+        const ancho = Math.min(imagen.naturalWidth, lado / factor);
+        const alto = Math.min(imagen.naturalHeight, lado / factor);
+        const origenX = Math.max(0, Math.min(imagen.naturalWidth - ancho, -x / factor));
+        const origenY = Math.max(0, Math.min(imagen.naturalHeight - alto, -y / factor));
+        return {
+          x: Number((origenX / imagen.naturalWidth).toFixed(8)),
+          y: Number((origenY / imagen.naturalHeight).toFixed(8)),
+          ancho: Number((ancho / imagen.naturalWidth).toFixed(8)),
+          alto: Number((alto / imagen.naturalHeight).toFixed(8))
+        };
+      }
+
+      const guardar = h("button", {
+        type: "button",
+        class: "btn btn-primario",
+        onclick: () => {
+          guardar.disabled = true;
+          const recorte = recorteActual();
+          cerrarHoja();
+          subiendo(api.subir_archivo(nombre, datosArchivo, recorte));
+        }
+      }, "Subir imagen");
+      zoom.addEventListener("input", () => cambiarZoom(zoom.value));
+      visor.addEventListener("pointerdown", (evento) => {
+        arrastre = { x: evento.clientX, y: evento.clientY, imagenX: x, imagenY: y };
+        visor.setPointerCapture(evento.pointerId);
+      });
+      visor.addEventListener("pointermove", (evento) => {
+        if (!arrastre) return;
+        x = arrastre.imagenX + evento.clientX - arrastre.x;
+        y = arrastre.imagenY + evento.clientY - arrastre.y;
+        ajustarLimites();
+      });
+      visor.addEventListener("pointerup", () => { arrastre = null; });
+      visor.addEventListener("pointercancel", () => { arrastre = null; });
+      visor.addEventListener("keydown", (evento) => {
+        const movimiento = evento.shiftKey ? 30 : 10;
+        if (evento.key === "ArrowLeft") x -= movimiento;
+        else if (evento.key === "ArrowRight") x += movimiento;
+        else if (evento.key === "ArrowUp") y -= movimiento;
+        else if (evento.key === "ArrowDown") y += movimiento;
+        else return;
+        evento.preventDefault();
+        ajustarLimites();
+      });
+      function prepararImagen() {
+        if (imagenLista || !imagen.naturalWidth) return;
+        imagenLista = true;
+        requestAnimationFrame(() => {
+          if ($("velo").classList.contains("hidden")) return;
+          escalaBase = Math.max(visor.clientWidth / imagen.naturalWidth, visor.clientHeight / imagen.naturalHeight);
+          escala = 1;
+          x = (visor.clientWidth - imagen.naturalWidth * escalaBase) / 2;
+          y = (visor.clientHeight - imagen.naturalHeight * escalaBase) / 2;
+          ajustarLimites();
+          guardar.disabled = false;
+        });
+      }
+      imagen.addEventListener("load", prepararImagen);
+      imagen.addEventListener("error", () => {
+        error.textContent = "No se pudo abrir la vista previa de esta imagen.";
+        guardar.disabled = true;
+      });
+      if (p.imagen.url) {
+        imagenBase.addEventListener("error", () => {
+          imagenBase.replaceWith(h("div", { class: "recorte-discord-respaldo" }, icono("foto")));
+        });
+        imagenBase.src = p.imagen.url;
+      }
+      guardar.disabled = true;
+      imagen.src = datosArchivo;
+      miniatura.src = datosArchivo;
+      ventana.append(
+        h("div", { class: "recorte-previsualizaciones" },
+          visor,
+          circulo
+            ? h("div", { class: "recorte-discord-vista" },
+              muestraDiscord,
+              h("small", { text: "Así aparece en Discord" })
+            )
+            : h("div", { class: "recorte-miniatura" }, visorChico, h("small", { text: "Imagen chica" }))
+        ),
+        h("label", { class: "recorte-control", for: "recorte-zoom" }, "Zoom"),
+        h("div", { class: "recorte-zoom-contenedor" },
+          h("span", { text: "−" }),
+          Object.assign(zoom, { id: "recorte-zoom" }),
+          h("span", { text: "+" })
+        ),
+        h("p", { class: "recorte-ayuda", text: "Arrastra la imagen y ajusta el zoom. Discord muestra estas imágenes en formato cuadrado." }),
+        h("p", { class: "recorte-aviso-privacidad", text: "Al continuar, la imagen recortada se enviará a freeimage.host para obtener un enlace que Discord pueda mostrar." }),
+        /\.(gif)$/i.test(nombre)
+          ? h("p", { class: "recorte-gif", text: "Este GIF conserva su animación; el encuadre se aplicará a todos sus fotogramas." })
+          : null,
+        error,
+        h("div", { class: "acciones" },
+          h("button", { type: "button", class: "btn", onclick: cerrarHoja }, "Cancelar"),
+          guardar
+        )
+      );
+      hoja(h("h2", { id: "hoja-titulo", text: "Ajustar imagen" }), ventana);
+      if (imagen.complete && imagen.naturalWidth) prepararImagen();
+      else if (imagen.complete) {
+        error.textContent = "No se pudo abrir la vista previa de esta imagen.";
+      }
+    }
+
+    function cargarArchivo(nombre, datosArchivo) {
+      editarEncuadre(nombre, datosArchivo);
+    }
+
     function elegir() {
-      subiendo(api.elegir_archivo());
+      api.elegir_archivo().then((resultado) => {
+        if (resultado && resultado.datos) cargarArchivo(resultado.nombre, resultado.datos);
+        else if (resultado && resultado.error) toast(resultado.error, true);
+      }).catch(() => toast("No se pudo abrir el selector de imágenes", true));
     }
 
     function leerArchivo(archivo) {
-      if (!/^image\//.test(archivo.type)) { toast("Eso no es una imagen", true); return; }
+      if (!/\.(png|jpe?g|gif|webp)$/i.test(archivo.name) || !/^image\//.test(archivo.type)) {
+        toast("Formato no soportado. Usa PNG, JPG, GIF o WEBP.", true);
+        return;
+      }
       if (archivo.size > 10 * 1024 * 1024) { toast("La imagen pesa más de 10 MB", true); return; }
       const lector = new FileReader();
-      subiendo(new Promise((ok, mal) => {
-        lector.onload = () => api.subir_archivo(archivo.name, lector.result).then(ok, mal);
-        lector.onerror = mal;
-        lector.readAsDataURL(archivo);
-      }));
+      lector.onload = () => cargarArchivo(archivo.name, lector.result);
+      lector.onerror = () => toast("No se pudo leer la imagen", true);
+      lector.readAsDataURL(archivo);
     }
 
     soltar.addEventListener("click", elegir);
@@ -647,7 +834,7 @@
   function construirPreview() {
     const partes = {
       kicker: h("span", {}),
-      rot: h("span", { class: "vp-rot hidden" }, icono("rotacion"), h("span", {})),
+      personalTexto: h("span", { text: "" }),
       personal: h("div", { class: "vp-personal hidden" }),
       grande: h("div", { class: "vp-grande" }),
       chica: h("div", { class: "vp-chica hidden" }),
@@ -659,6 +846,7 @@
       botones: h("div", { class: "vp-botones" }),
       estado: h("div", { class: "vp-estado" })
     };
+    partes.personal.append(partes.personalTexto);
     preview = partes;
     return h("section", { class: "vista-previa", "aria-label": "Vista previa en Discord" },
       h("div", { class: "vp-encabezado" },
@@ -666,7 +854,7 @@
         h("span", { class: "vp-etiqueta", text: "VISTA PREVIA" })
       ),
       partes.personal,
-      h("p", { class: "vp-kicker" }, partes.kicker, partes.rot),
+      h("p", { class: "vp-kicker" }, partes.kicker),
       h("div", { class: "vp-cuerpo" },
         h("div", { class: "vp-arte" }, partes.grande, partes.chica),
         h("div", { class: "vp-meta" }, partes.nombre, partes.detalles, partes.texto, partes.barra, partes.tiempo)
@@ -706,16 +894,14 @@
     const p = perfil(vista.id);
     if (!p) return;
     const activo = encendido(p.id);
-    const indice = activo && estado ? estado.indice : Math.floor(Date.now() / 1000 / Math.max(15, p.rotar_cada));
-    const elegir = (lista) => { const v = validos(lista); return v.length ? v[indice % v.length] : ""; };
+    const elegir = (lista) => { const v = validos(lista); return v.length ? v[0] : ""; };
 
     const per = config.personalizado;
-    preview.personal.classList.toggle("hidden", !per.texto && !per.emoji);
-    preview.personal.textContent = [per.emoji, per.texto].filter(Boolean).join(" ");
+    const modoRpc = estado && estado.modo_conexion === "rpc";
+    preview.personal.classList.toggle("hidden", modoRpc || !per.texto && !per.emoji);
+    preview.personalTexto.textContent = [per.emoji, per.texto].filter(Boolean).join(" ");
 
     preview.kicker.textContent = KICKER[p.tipo];
-    preview.rot.classList.toggle("hidden", !rota(p));
-    preview.rot.lastChild.textContent = "cada " + p.rotar_cada + " s";
     ponerImagen(preview.grande, p.imagen.url, p.tipo);
     preview.grande.title = p.imagen.texto || "";
     preview.chica.classList.toggle("hidden", !p.imagen_chica.url);
@@ -757,7 +943,7 @@
     const firma = JSON.stringify(botones);
     if (preview.botones.dataset.firma !== firma) {
       preview.botones.dataset.firma = firma;
-      preview.botones.replaceChildren(...botones.map(([t, c, url]) => h("span", { class: c, text: t, title: url || undefined })));
+      preview.botones.replaceChildren(...botones.map(([t, c, url]) => h("span", { class: "vp-boton" + (c ? " " + c : ""), text: t, title: url || undefined })));
     }
 
     let clase = "vp-estado";
@@ -770,6 +956,12 @@
       ico = "aviso";
     } else if (activo) {
       if (!estado || !estado.conectado) texto = "Conectando con Discord…";
+      else if (modoRpc && p.tipo === "transmitiendo") {
+        clase += " mal";
+        texto = "Transmitiendo no es compatible con el modo RPC";
+        ico = "aviso";
+      }
+      else if (modoRpc) { clase += " ok"; texto = "Enviado a Discord RPC"; ico = "check"; }
       else if (estado.visible === true) { clase += " ok"; texto = "Visible en Discord"; ico = "check"; }
       else if (estado.visible === false) { clase += " mal"; texto = "Discord la está ocultando"; ico = "aviso"; }
       else texto = "Comprobando…";
@@ -779,13 +971,22 @@
     const estadoHijos = [ico ? icono(ico) : null, h("span", { text: texto })].filter(Boolean);
     if (omitidas) estadoHijos.push(h("span", {
         class: "vp-nota-omitidas",
-        text: `Discord no muestra ${omitidas} perfil(es): falta enlace de stream, repiten tipo o exceden su límite.`
+        text: modoRpc
+          ? `RPC solo publica una actividad compatible; ${omitidas} actividad(es) no se envían.`
+          : `Discord no muestra ${omitidas} perfil(es): falta enlace de stream, repiten tipo o exceden su límite.`
     }));
     preview.estado.replaceChildren(...estadoHijos);
   }
 
   function vistaEstado() {
-    const opciones = h("div", { class: "grupo", role: "radiogroup", "aria-label": "Disponibilidad" },
+    const modoRpc = estado && estado.modo_conexion === "rpc";
+    const opciones = modoRpc
+      ? h("div", { class: "grupo" }, h("div", { class: "fila" },
+          h("span", { class: "etiqueta" }, "Disponibilidad de Discord", h("small", {
+            text: "RPC no cambia tu estado global. Este ajuste se conserva para el modo con token."
+          }))
+        ))
+      : h("div", { class: "grupo", role: "radiogroup", "aria-label": "Disponibilidad" },
       ...PUNTOS.map(([valor, nombre, desc, color]) => h("button", {
         type: "button",
         class: "fila opcion",
@@ -810,19 +1011,28 @@
       actualizarLimites();
       guardarPronto();
     };
-    const personal = h("div", { class: "grupo" },
-      fila("Emoji", entrada({ id: "p-emoji", value: per.emoji, maxlength: 16, placeholder: "🔥" }, (v) => cambiarPersonalizado("emoji", v)), "p-emoji"),
-      fila("Texto", entrada({ id: "p-texto", value: per.texto, maxlength: MAX_TEXTO, placeholder: "¿Qué estás haciendo?" }, (v) => cambiarPersonalizado("texto", v)), "p-texto")
-    );
+    const personal = modoRpc
+      ? h("div", { class: "grupo" }, h("div", { class: "fila" },
+          h("span", { class: "etiqueta" }, "Estado personalizado", h("small", {
+            text: "Discord RPC no puede establecerlo. Tu texto y emoji guardados se mantienen para el modo con token."
+          }))
+        ))
+      : h("div", { class: "grupo" },
+          fila("Emoji", entrada({ id: "p-emoji", value: per.emoji, maxlength: 16, placeholder: "🔥" }, (v) => cambiarPersonalizado("emoji", v)), "p-emoji"),
+          fila("Texto", entrada({ id: "p-texto", value: per.texto, maxlength: MAX_TEXTO, placeholder: "¿Qué estás haciendo?" }, (v) => cambiarPersonalizado("texto", v)), "p-texto")
+        );
     const activo = perfil(config.perfil_activo);
     const activos = config.perfiles.filter((x) => encendido(x.id)).map((x) => x.titulo);
-    const limiteActividades = h("p", { class: "seccion-pie limite-actividades", text: resumenLimiteActividades() });
+    const limiteActividades = h("p", {
+      class: "seccion-pie limite-actividades",
+      text: modoRpc ? "RPC muestra una actividad compatible a la vez." : resumenLimiteActividades()
+    });
     const actual = h("div", { class: "grupo" },
       h("div", { class: "fila" },
         h("span", { class: "etiqueta" }, "Actividad", h("small", { text: activos.length ? activos.join(", ") : "Ninguna" })),
         activo ? h("button", { type: "button", class: "btn btn-chico", style: "margin-left:auto", onclick: detener }, "Detener") : null
       ),
-      h("div", { class: "fila" },
+      !modoRpc && h("div", { class: "fila" },
         h("span", { class: "etiqueta" }, "Compartir actividad", h("small", {
           text: estado && estado.compartir === false ? "Apagado: Discord oculta tu actividad" : estado && estado.compartir ? "Encendido" : "Sin revisar"
         })),
@@ -832,80 +1042,20 @@
     return [
       barra(h("span", { text: "Estado" })),
       h("div", { class: "pagina" },
-        ...seccion("Disponibilidad", opciones),
-        ...seccion("Estado personalizado", personal, "Sale junto a la actividad y ocupa uno de los cinco espacios de Discord. Win + . abre el selector de emojis de Windows."),
+        ...(!modoRpc ? seccion("Disponibilidad", opciones) : []),
+        ...(!modoRpc ? seccion("Estado personalizado", personal,
+          "Sale junto a la actividad y ocupa uno de los cinco espacios de Discord. Win + . abre el selector de emojis de Windows.") : []),
         limiteActividades,
-        ...seccion("Ahora", actual, estado && estado.actividades_omitidas
-          ? `Discord no está mostrando ${estado.actividades_omitidas} perfil(es): falta enlace de stream, repiten tipo o exceden el límite de actividades.`
-          : null)
-      )
-    ];
-  }
-
-  function vistaRotacion() {
-    const r = config.rotar_perfiles;
-    const general = h("div", { class: "grupo" },
-      h("div", { class: "fila" },
-        h("span", { class: "etiqueta" }, "Rotar perfiles", h("small", { text: "Cambia de perfil automáticamente" })),
-        interruptor("f-rotar-on", r.activo, "Rotar perfiles", (v) => {
-          if (v && r.ids.length < 2) {
-            toast("Marca al menos 2 perfiles", true);
-            pintarContenido();
-            return;
-          }
-          r.activo = v;
-          if (v && !r.ids.includes(config.perfil_activo)) config.perfil_activo = r.ids[0];
-          guardarAhora();
-          pintarCuenta();
-          pintarPerfiles();
-        })
-      ),
-      h("div", { class: "fila" },
-        h("label", { for: "f-rot-min", text: "Cambiar cada" }),
-        paso("f-rot-min", r.minutos, 1, 1440, "minutos", (n) => { r.minutos = n; guardarPronto(); })
-      )
-    );
-    const lista = h("div", { class: "grupo" }, ...config.perfiles.map((p) => h("label", { class: "fila", for: "rot-" + p.id },
-      h("input", {
-        type: "checkbox", class: "check-cuadro", id: "rot-" + p.id, checked: r.ids.includes(p.id),
-        onchange: (e) => {
-          if (e.target.checked) r.ids = config.perfiles.map((x) => x.id).filter((id) => id === p.id || r.ids.includes(id));
-          else r.ids = r.ids.filter((id) => id !== p.id);
-          if (r.activo && r.ids.length < 2) { r.activo = false; toast("Rotación apagada: quedan menos de 2 perfiles"); pintarContenido(); }
-          guardarPronto();
-          pintarCuenta();
-        }
-      }),
-      h("span", { class: "perfil-icono t-" + p.tipo }, icono(p.tipo)),
-      h("span", { class: "perfil-texto" }, h("strong", { text: p.titulo }), h("span", { text: NOMBRE_TIPO[p.tipo] }))
-    )));
-    return [
-      barra(h("span", { text: "Rotación" })),
-      h("div", { class: "pagina" },
-        ...seccion(null, general),
-        ...seccion("Perfiles en la rotación", config.perfiles.length ? lista : h("p", { class: "seccion-pie", text: "Todavía no hay perfiles." }), "Van en el orden de la barra lateral. Los textos de cada perfil siguen rotando igual.")
+        ...seccion("Ahora", actual, modoRpc
+          ? `El modo sin token publica una sola actividad compatible y no cambia tu disponibilidad global. ${estado && estado.actividades_omitidas ? `${estado.actividades_omitidas} actividad(es) no se envían. ` : ""}Transmitiendo y el estado personalizado no son compatibles.`
+          : estado && estado.actividades_omitidas
+            ? `Discord no está mostrando ${estado.actividades_omitidas} perfil(es): falta enlace de stream, repiten tipo o exceden el límite de actividades.`
+            : null)
       )
     ];
   }
 
   function vistaAjustes() {
-    const selectorTema = h("div", { class: "temas", role: "radiogroup", "aria-label": "Tema de color" },
-      ...TEMAS.map(([id, nombre, color]) => h("button", {
-        type: "button",
-        class: "tema-opcion",
-        role: "radio",
-        "aria-checked": config.tema === id ? "true" : "false",
-        onclick: () => {
-          config.tema = id;
-          aplicarTema(id);
-          guardarPronto();
-          pintarContenido();
-        }
-      },
-        h("span", { class: "tema-muestra", style: `--tema-muestra:${color}` }),
-        h("span", { text: nombre })
-      ))
-    );
     const estadoActualizacion = !actualizacion
       ? "Busca una versión nueva de Pichoni."
       : actualizacion.estado === "buscando"
@@ -940,11 +1090,29 @@
           : null
       )
     );
+    const modoRpc = estado && estado.modo_conexion === "rpc";
     const cuenta = h("div", { class: "grupo" },
       h("div", { class: "fila" },
-        h("span", { class: "etiqueta" }, "Cuenta", h("small", { text: estado && estado.usuario ? "@" + estado.usuario.tag : "Sin conectar" })),
+        h("span", { class: "etiqueta" }, "Conexión", h("small", {
+          text: modoRpc ? "Discord de escritorio · sin token" : estado && estado.usuario ? "@" + estado.usuario.tag : "Modo con token"
+        })),
+        h("button", {
+          type: "button",
+          class: "btn btn-chico",
+          style: "margin-left:auto",
+          onclick: () => cambiarModoConexion(modoRpc ? "token" : "rpc")
+        }, modoRpc ? "Usar modo con token" : "Usar modo sin token")
+      ),
+      h("div", { class: "fila" },
+        h("span", { class: "etiqueta" }, "Token", h("small", {
+          text: estado && estado.tiene_token
+            ? modoRpc ? "Guardado localmente; no se usa en el modo actual" : "Guardado localmente en este PC"
+            : "No hay token guardado"
+        })),
         h("button", { type: "button", class: "btn btn-chico", style: "margin-left:auto", onclick: hojaToken }, "Cambiar token"),
-        h("button", { type: "button", class: "btn btn-chico btn-peligro", onclick: cerrarSesion }, icono("salir"), "Cerrar sesión")
+        estado && estado.tiene_token
+          ? h("button", { type: "button", class: "btn btn-chico btn-peligro", onclick: cerrarSesion }, icono("salir"), "Eliminar token")
+          : null
       ),
       h("div", { class: "fila" },
         h("span", { class: "etiqueta" }, "Iniciar con Windows", h("small", { text: "Se abre sola, minimizada en la bandeja" })),
@@ -956,16 +1124,53 @@
         if (/^\d{15,24}$/.test(v.trim())) { config.app_id = v.trim(); guardarPronto(); }
       }), "f-app")
     );
-    const tema = h("div", { class: "grupo" }, selectorTema);
+    const selectorColor = (id, etiqueta, clave, variable) => h("div", { class: "fila" },
+      h("label", { for: id, text: etiqueta }),
+      h("input", {
+        id,
+        class: "color-marca",
+        type: "color",
+        value: config[clave] || getComputedStyle(document.documentElement).getPropertyValue(variable).trim(),
+        "aria-label": etiqueta,
+        oninput: (e) => {
+          config[clave] = e.target.value.toLowerCase();
+          aplicarTema(config.color_marca);
+          guardarPronto();
+        }
+      })
+    );
+    const colores = h("div", { class: "grupo colores-personalizados" },
+      selectorColor("f-color-marca", "Color de acento", "color_marca", "--accent"),
+      selectorColor("f-color-botones", "Color de botones", "color_botones", "--button-bg"),
+      selectorColor("f-color-fondo", "Fondo principal", "color_fondo", "--bg"),
+      selectorColor("f-color-paneles", "Paneles y tarjetas", "color_paneles", "--panel"),
+      selectorColor("f-color-barra-lateral", "Barra lateral", "color_barra_lateral", "--sidebar"),
+      selectorColor("f-color-texto", "Texto", "color_texto", "--texto"),
+      h("button", {
+        type: "button",
+        class: "btn btn-chico",
+        onclick: () => {
+          config.color_fondo = "";
+          config.color_paneles = "";
+          config.color_barra_lateral = "";
+          config.color_texto = "";
+          aplicarTema(config.color_marca);
+          guardarPronto();
+          pintarContenido();
+        }
+      }, "Restablecer fondo y colores de superficies")
+    );
     return [
       barra(h("span", { text: "Ajustes" })),
       h("div", { class: "pagina" },
-        ...seccion(null, cuenta, "Cerrar la ventana sale de Pichoni y quita su actividad. Minimizar la deja en la bandeja junto al reloj."),
-        ...seccion("Apariencia", tema, "El tema se guarda en este PC y puedes cambiarlo cuando quieras."),
-        ...seccion("Avanzado", avanzado, "Discord necesita una app para mostrar imágenes y botones. Si aparece el nombre de otra app, crea la tuya en discord.com/developers y pega su ID."),
+        ...seccion(null, cuenta, "El modo sin token requiere Discord de escritorio abierto. Solo muestra perfiles Jugando, Escuchando, Viendo y Compitiendo; los demás se conservan y vuelven a aparecer en el modo con token. Cambiar de modo no elimina el token guardado. Cerrar la ventana deja Pichoni en segundo plano; elige Salir en el icono de la bandeja para cerrarlo por completo."),
+        ...seccion("Apariencia", colores, "Personaliza por separado el acento, los botones, el fondo, los paneles, la barra lateral y el texto."),
+        ...seccion("Avanzado", avanzado, "Discord necesita una aplicación para mostrar imágenes y botones. El Client ID debe estar configurado para Rich Presence; algunas funciones y el acceso de otros usuarios pueden requerir aprobación de Discord."),
         ...seccion("Actualizaciones", actualizaciones, "Consulta las versiones y descarga el instalador oficial de Pichoni."),
         ...seccion("Aviso", h("div", { class: "grupo" }, h("div", { class: "fila" }, h("span", {
-          text: "Esta app usa tu cuenta directamente. Va contra las reglas de Discord y existe riesgo de baneo. Nunca compartas tu token."
+          text: modoRpc
+            ? "El modo RPC no utiliza tu token ni cambia tu estado global. Discord debe estar abierto y puede ocultar actividades según tus ajustes de privacidad."
+            : "El modo con token usa tu cuenta directamente. Puede incumplir las reglas de Discord y existe riesgo de baneo. Nunca compartas tu token."
         }))))
       )
     ];
@@ -992,20 +1197,31 @@
       api.guardar_token(campo.value).then((r) => {
         if (r.error) { error.textContent = r.error; return; }
         estado = r;
+        config = r.config;
+        revision = r.revision;
         cerrarHoja();
         pintarCuenta();
+        pintarPerfiles();
+        pintarContenido();
         toast("Cuenta conectada");
-      }).finally(() => { boton.disabled = false; });
+      }).catch(() => { error.textContent = "No se pudo conectar. Revisa tu conexión e inténtalo de nuevo."; })
+        .finally(() => { boton.disabled = false; });
     };
     boton.addEventListener("click", enviar);
     campo.addEventListener("keydown", (e) => { if (e.key === "Enter") enviar(); });
     hoja(
       h("h2", { id: "hoja-titulo", text: "Cambiar token" }),
-      h("p", { text: "Se reemplaza el token guardado en este PC." }),
+      h("p", { text: "El token se guarda solo en este PC y activa el modo avanzado con token." }),
       campo,
       error,
       h("div", { class: "acciones" }, h("button", { type: "button", class: "btn", onclick: cerrarHoja }, "Cancelar"), boton)
     );
+  }
+
+  function mostrarModoToken(mostrar) {
+    $("bienvenida-modos").classList.toggle("hidden", mostrar);
+    $("bienvenida-token").classList.toggle("hidden", !mostrar);
+    if (mostrar) setTimeout(() => $("token-inicio").focus(), 0);
   }
 
   function mostrarBienvenida(visible) {
@@ -1013,12 +1229,91 @@
     $("app").classList.toggle("hidden", visible);
     if (visible) {
       cerrarHoja();
-      setTimeout(() => $("token-inicio").focus(), 50);
+      mostrarModoToken(false);
+      setTimeout(() => $("rpc-conectar").focus(), 50);
     }
   }
 
-  function aplicarTema(tema) {
-    document.documentElement.dataset.theme = TEMAS.some(([id]) => id === tema) ? tema : "pichoni";
+  function cambiarModoConexion(modo) {
+    return api.cambiar_modo_conexion(modo).then((r) => {
+      if (r.error) {
+        toast(r.error, true);
+        return;
+      }
+      estado = r;
+      config = r.config;
+      revision = r.revision;
+      if (modo === "token" && !r.tiene_token) {
+        mostrarBienvenida(true);
+        pintarCuenta();
+        return;
+      }
+      arrancar(r);
+      toast(modo === "rpc"
+        ? "Modo sin token activado. Abre Discord de escritorio para conectar."
+        : "Modo con token activado");
+    }).catch(() => toast("No se pudo cambiar el modo de conexión", true));
+  }
+
+  function aplicarTema(colorMarca = config && config.color_marca) {
+    const raiz = document.documentElement;
+    raiz.dataset.theme = "pichoni";
+    for (const propiedad of ["--bg", "--fondo-hondo", "--panel", "--panel-2", "--panel-3", "--panel-usuario", "--card", "--sidebar", "--label", "--texto", "--secondary", "--tertiary", "--button-bg", "--button-hover", "--button-active", "--button-text"]) {
+      raiz.style.removeProperty(propiedad);
+    }
+    const color = /^#[0-9a-f]{6}$/i.test(colorMarca || "") ? colorMarca : "#280060";
+    const rgb = color.slice(1).match(/.{2}/g).map((parte) => parseInt(parte, 16));
+    const atenuado = rgb.map((canal) => Math.round(canal * 0.84));
+    const rgbColor = rgb.join(", ");
+    raiz.style.setProperty("--accent", color);
+    raiz.style.setProperty("--accent-hover", `rgb(${atenuado.join(", ")})`);
+    raiz.style.setProperty("--accent-texto", color);
+    raiz.style.setProperty("--accent-soft", `rgba(${rgbColor}, 0.16)`);
+    raiz.style.setProperty("--selected", `rgba(${rgbColor}, 0.22)`);
+    raiz.style.setProperty("--focus", color);
+
+    const mezclarColor = (hex, colorMezcla, cantidad) => {
+      const canales = hex.slice(1).match(/.{2}/g).map((parte) => parseInt(parte, 16));
+      const mezcla = colorMezcla.slice(1).match(/.{2}/g).map((parte) => parseInt(parte, 16));
+      return `#${canales.map((canal, indice) => Math.round(canal * (1 - cantidad) + mezcla[indice] * cantidad).toString(16).padStart(2, "0")).join("")}`;
+    };
+    const colorValido = (valor) => /^#[0-9a-f]{6}$/i.test(valor || "");
+    const luminancia = (hex) => hex.slice(1).match(/.{2}/g)
+      .map((parte) => parseInt(parte, 16) / 255)
+      .reduce((suma, canal) => suma + canal, 0) / 3;
+    const aplicarColor = (propiedad, valor) => {
+      if (valor) raiz.style.setProperty(propiedad, valor);
+      else raiz.style.removeProperty(propiedad);
+    };
+    const colorBotones = colorValido(config?.color_botones) ? config.color_botones : "";
+    const fondoBotones = colorBotones || getComputedStyle(raiz).getPropertyValue("--thumb").trim();
+    const botonesClaros = luminancia(fondoBotones) > 0.55;
+    aplicarColor("--button-bg", colorBotones);
+    aplicarColor("--button-hover", colorBotones ? mezclarColor(colorBotones, botonesClaros ? "#000000" : "#ffffff", 0.12) : "");
+    aplicarColor("--button-active", colorBotones ? mezclarColor(colorBotones, botonesClaros ? "#000000" : "#ffffff", 0.22) : "");
+    aplicarColor("--button-text", colorBotones ? (botonesClaros ? "#1e1f22" : "#ffffff") : "");
+    const fondoBase = getComputedStyle(raiz).getPropertyValue("--bg").trim();
+    const panelBase = getComputedStyle(raiz).getPropertyValue("--panel").trim();
+    const colorFondo = colorValido(config?.color_fondo) ? config.color_fondo : "";
+    const colorPaneles = colorValido(config?.color_paneles) ? config.color_paneles : "";
+    const colorBarraLateral = colorValido(config?.color_barra_lateral) ? config.color_barra_lateral : "";
+    const colorTexto = colorValido(config?.color_texto) ? config.color_texto : "";
+    const fondoClaro = luminancia(colorFondo || fondoBase) > 0.5;
+    const panelClaro = luminancia(colorPaneles || panelBase) > 0.5;
+    const matizPanel = panelClaro ? "#000000" : "#ffffff";
+
+    aplicarColor("--bg", colorFondo);
+    aplicarColor("--fondo-hondo", colorFondo ? mezclarColor(colorFondo, "#000000", fondoClaro ? 0.04 : 0.12) : "");
+    aplicarColor("--panel", colorPaneles);
+    aplicarColor("--panel-2", colorPaneles ? mezclarColor(colorPaneles, matizPanel, 0.07) : "");
+    aplicarColor("--panel-3", colorPaneles ? mezclarColor(colorPaneles, matizPanel, 0.14) : "");
+    aplicarColor("--panel-usuario", colorPaneles ? mezclarColor(colorPaneles, "#000000", 0.08) : "");
+    aplicarColor("--card", colorPaneles ? mezclarColor(colorPaneles, matizPanel, 0.12) : "");
+    aplicarColor("--sidebar", colorBarraLateral);
+    aplicarColor("--label", colorTexto);
+    aplicarColor("--texto", colorTexto);
+    aplicarColor("--secondary", colorTexto ? mezclarColor(colorTexto, colorFondo || fondoBase, 0.25) : "");
+    aplicarColor("--tertiary", colorTexto ? mezclarColor(colorTexto, colorFondo || fondoBase, 0.45) : "");
   }
 
   async function buscarActualizaciones() {
@@ -1038,7 +1333,8 @@
   let animandoSalida = false;
 
   function iniciarAnimacionApertura() {
-    if (animandoSalida) return;
+    animandoSalida = false;
+    $("app").classList.remove("saliendo");
     const splash = $("splash");
     if (!splash) return;
     splash.classList.remove("terminado", "cerrando");
@@ -1091,13 +1387,22 @@
 
   function cerrarSesion() {
     hoja(
-      h("h2", { id: "hoja-titulo", text: "¿Cerrar sesión?" }),
-      h("p", { text: "Se borra el token de este PC y se quita tu actividad. Tus perfiles se mantienen." }),
+      h("h2", { id: "hoja-titulo", text: "¿Eliminar el token guardado?" }),
+      h("p", { text: "Se borra el token de este PC, se cambia al modo sin token y se quita tu actividad durante el cambio. Tus perfiles se mantienen." }),
       h("div", { class: "acciones" },
         h("button", { type: "button", class: "btn", onclick: cerrarHoja }, "Cancelar"),
-        h("button", { type: "button", class: "btn btn-primario", style: "background:var(--red-cerrar)", onclick: () => {
-          api.borrar_token().then((e) => { estado = e; mostrarBienvenida(true); pintarCuenta(); });
-        } }, "Cerrar sesión")
+        h("button", { type: "button", class: "btn btn-primario", onclick: () => {
+          api.borrar_token().then((e) => {
+            if (e.error) {
+              toast(e.error, true);
+              return;
+            }
+            estado = e;
+            config = e.config;
+            cerrarHoja();
+            arrancar(e);
+          }).catch(() => toast("No se pudo eliminar el token", true));
+        } }, "Eliminar token")
       )
     );
   }
@@ -1108,7 +1413,7 @@
       h("p", { text: "Esta acción no se puede deshacer." }),
       h("div", { class: "acciones" },
         h("button", { type: "button", class: "btn", onclick: cerrarHoja }, "Cancelar"),
-        h("button", { type: "button", class: "btn btn-primario", style: "background:var(--red)", onclick: () => { cerrarHoja(); eliminar(p); } }, "Eliminar")
+        h("button", { type: "button", class: "btn btn-primario", onclick: () => { cerrarHoja(); eliminar(p); } }, "Eliminar")
       )
     );
   }
@@ -1135,8 +1440,6 @@
   function eliminar(p) {
     const i = config.perfiles.indexOf(p);
     config.perfiles.splice(i, 1);
-    config.rotar_perfiles.ids = config.rotar_perfiles.ids.filter((id) => id !== p.id);
-    if (config.rotar_perfiles.ids.length < 2) config.rotar_perfiles.activo = false;
     config.perfiles_extra = (config.perfiles_extra || []).filter((id) => id !== p.id);
     if (config.perfil_activo === p.id) config.perfil_activo = null;
     guardarAhora();
@@ -1154,6 +1457,16 @@
   function activar(id) {
     const seleccionado = perfil(id);
     if (!seleccionado) return;
+    if (estado && estado.modo_conexion === "rpc") {
+      if (!TIPOS_RPC.has(seleccionado.tipo)) {
+        toast("Este tipo no está disponible en el modo RPC. Cambia al modo con token para usarlo.", true);
+        return;
+      }
+      config.perfil_activo = id;
+      guardarAhora().then(() => toast("Actividad activada"));
+      refrescarActivos();
+      return;
+    }
     if (seleccionado.tipo === "transmitiendo" &&
         !/^https?:\/\/(www\.|m\.)?(twitch\.tv|youtube\.com|youtu\.be)\/\S+/i.test(seleccionado.url)) {
       toast("Agrega un enlace real de Twitch o YouTube para activar Transmitiendo.", true);
@@ -1177,9 +1490,6 @@
           id
         ];
       }
-      if (config.rotar_perfiles.activo && !config.rotar_perfiles.ids.includes(id)) {
-        config.rotar_perfiles.activo = false;
-      }
       guardarAhora().then(() => toast("Discord muestra uno por tipo: reemplacé el perfil anterior"));
       refrescarActivos();
       return;
@@ -1198,10 +1508,6 @@
       return;
     }
     config.perfil_activo = id;
-    if (config.rotar_perfiles.activo && !config.rotar_perfiles.ids.includes(id)) {
-      config.rotar_perfiles.activo = false;
-      toast("Rotación pausada: este perfil no está en ella");
-    }
     guardarAhora().then(() => toast("Perfil activado"));
     pintarPerfiles();
     pintarCuenta();
@@ -1213,8 +1519,12 @@
   }
 
   function apagar(id) {
+    if (estado && estado.modo_conexion === "rpc") {
+      if (config.perfil_activo === id) detener();
+      return;
+    }
     const extras = config.perfiles_extra || [];
-    if (config.perfil_activo === id && extras.length && !config.rotar_perfiles.activo) {
+    if (config.perfil_activo === id && extras.length) {
       config.perfil_activo = extras[0];
       config.perfiles_extra = extras.slice(1);
     } else if (config.perfil_activo !== id) {
@@ -1229,7 +1539,6 @@
 
   function detener() {
     config.perfil_activo = null;
-    config.rotar_perfiles.activo = false;
     guardarAhora().then(() => toast("Actividad quitada"));
     pintarPerfiles();
     pintarCuenta();
@@ -1254,7 +1563,7 @@
       if (e.revision !== revision && !guardando && !cambiosSinGuardar && !document.activeElement.matches("input")) {
         revision = e.revision;
         config = e.config;
-        aplicarTema(config.tema);
+        aplicarTema(config.color_marca);
         pintarPerfiles();
         pintarContenido();
       }
@@ -1268,7 +1577,7 @@
       }
       pintarCuenta();
       actualizarPreview();
-      if (!e.tiene_token && $("bienvenida").classList.contains("hidden")) mostrarBienvenida(true);
+      if (e.modo_conexion === "token" && !e.tiene_token && $("bienvenida").classList.contains("hidden")) mostrarBienvenida(true);
     }).catch(() => {});
   }
 
@@ -1277,10 +1586,11 @@
   function arrancar(e) {
     estado = e;
     config = e.config;
-    aplicarTema(config.tema);
+    aplicarTema(config.color_marca);
     revision = e.revision;
     mostrarBienvenida(false);
-    vista = { tipo: "perfil", id: config.perfil_activo || (config.perfiles[0] && config.perfiles[0].id) };
+    const inicial = perfilInicial();
+    vista = { tipo: "perfil", id: inicial && inicial.id };
     pintarCuenta();
     abrir(vista);
     if (!arrancado) {
@@ -1296,9 +1606,13 @@
       toast("No se pudo comprobar la actualización automática", true);
     });
     api.estado().then((e) => {
-      aplicarTema(e.config.tema);
-      if (e.tiene_token) arrancar(e);
-      else { estado = e; config = e.config; mostrarBienvenida(true); }
+      aplicarTema(e.config.color_marca);
+      if (e.config.inicio_completado) arrancar(e);
+      else {
+        estado = e;
+        config = e.config;
+        mostrarBienvenida(true);
+      }
     });
   }
 
@@ -1316,6 +1630,17 @@
   $("c-cerrar").addEventListener("click", iniciarAnimacionCierre);
   $("arrastre").addEventListener("dblclick", () => api && api.maximizar().then(pintarMaximizado));
   $("token-conectar").addEventListener("click", conectarInicio);
+  $("token-elegir").addEventListener("click", () => mostrarModoToken(true));
+  $("token-volver").addEventListener("click", () => mostrarModoToken(false));
+  $("rpc-conectar").addEventListener("click", () => {
+    const boton = $("rpc-conectar");
+    boton.disabled = true;
+    boton.setAttribute("aria-busy", "true");
+    cambiarModoConexion("rpc").finally(() => {
+      boton.disabled = false;
+      boton.removeAttribute("aria-busy");
+    });
+  });
   $("token-inicio").addEventListener("keydown", (e) => { if (e.key === "Enter") conectarInicio(); });
   $("token-ojo").addEventListener("click", () => {
     const c = $("token-inicio");

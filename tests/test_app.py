@@ -1,3 +1,5 @@
+import base64
+import io
 import threading
 import time
 from unittest.mock import Mock
@@ -7,6 +9,7 @@ from app import Api, Bandeja, Servicio
 from nucleo.config import config_vacia, perfil_vacio
 from nucleo.rotacion import Motor
 from nucleo.version import VERSION
+from PIL import Image
 
 
 class ConexionFalsa:
@@ -30,6 +33,7 @@ def servicio_para_aplicar(imagenes):
     servicio.candado = threading.RLock()
     servicio.aplicar_candado = threading.Lock()
     servicio.config = config_vacia()
+    servicio.config["modo_conexion"] = "token"
     perfil = perfil_vacio("Perfil")
     perfil["imagen"]["url"] = "https://images.example/test.png"
     servicio.config["perfiles"] = [perfil]
@@ -87,6 +91,92 @@ def test_aplicar_usa_app_id_capturado_y_envia_actividad():
     actividades, punto = servicio.conexion.actualizaciones[0]
     assert actividades[0]["assets"]["large_image"] == "mp:resolved"
     assert punto == "online"
+
+
+def test_rpc_envia_solo_el_perfil_principal_y_omite_estado_personalizado():
+    servicio = servicio_para_aplicar(None)
+    servicio.config["modo_conexion"] = "rpc"
+    extra = perfil_vacio("Perfil secundario", "viendo")
+    servicio.config["perfiles"].append(extra)
+    servicio.config["perfiles_extra"] = [extra["id"]]
+    servicio.config["personalizado"] = {"texto": "No compatible", "emoji": "🔥"}
+
+    servicio.aplicar()
+
+    assert len(servicio.conexion.actualizaciones) == 1
+    actividades, _ = servicio.conexion.actualizaciones[0]
+    assert len(actividades) == 1
+    assert actividades[0]["name"] == "Perfil"
+    assert all(actividad["type"] != 4 for actividad in actividades)
+
+
+def test_rpc_usa_enlace_https_directo_sin_resolver_con_token():
+    def no_resolver(*_):
+        raise AssertionError("RPC no debe resolver imágenes usando el token")
+
+    servicio = servicio_para_aplicar(ImagenesFalsas(no_resolver))
+    servicio.config["modo_conexion"] = "rpc"
+
+    servicio.aplicar()
+
+    actividades, _ = servicio.conexion.actualizaciones[0]
+    assert actividades[0]["assets"]["large_image"] == "https://images.example/test.png"
+
+
+def test_conectar_rpc_prepara_subida_local_sin_token(monkeypatch):
+    servicio = Servicio.__new__(Servicio)
+    servicio.config = config_vacia()
+    servicio.candado = threading.RLock()
+    servicio.conexion = None
+    servicio.token = ""
+    servicio.usuario = None
+    servicio.compartir = None
+    servicio.motor = Mock()
+    servicio.aplicar = Mock()
+    conexion = Mock()
+    monkeypatch.setattr(app, "ConexionRPC", Mock(return_value=conexion))
+
+    servicio.conectar_rpc()
+
+    assert servicio.imagenes.token == ""
+    assert servicio.imagenes.app_id == servicio.config["app_id"]
+    conexion.iniciar.assert_called_once_with()
+
+
+def test_elegir_archivo_devuelve_la_imagen_para_previsualizar(tmp_path):
+    ruta = tmp_path / "foto.png"
+    Image.new("RGB", (4, 4), "red").save(ruta)
+    api = Api(None)
+    api._ventana = Mock()
+    api._ventana.create_file_dialog.return_value = [str(ruta)]
+
+    resultado = api.elegir_archivo()
+
+    assert resultado["nombre"] == "foto.png"
+    assert resultado["datos"].startswith("data:image/png;base64,")
+    assert base64.b64decode(resultado["datos"].split(",", 1)[1]).startswith(b"\x89PNG")
+
+
+def test_subir_archivo_entrega_el_encuadre_al_procesador():
+    imagenes = Mock()
+    imagenes.subidas = {}
+    imagenes.subir.return_value = "https://images.example/recortada.png"
+    servicio = Mock()
+    servicio.imagenes = imagenes
+    servicio.candado = threading.RLock()
+    servicio.config = {"subidas": {}}
+    api = Api(servicio)
+    contenido = b"datos"
+    recorte = {"x": 0.1, "y": 0.2, "ancho": 0.8, "alto": 0.8}
+
+    resultado = api.subir_archivo(
+        "foto.png",
+        "data:image/png;base64," + base64.b64encode(contenido).decode("ascii"),
+        recorte,
+    )
+
+    imagenes.subir.assert_called_once_with("foto.png", contenido, recorte)
+    assert resultado == {"url": "https://images.example/recortada.png"}
 
 
 def test_actualizacion_automatica_lanza_instalador_y_cierra_app(monkeypatch, tmp_path):
@@ -160,14 +250,14 @@ def test_actualizacion_portable_no_se_inicia(monkeypatch):
     assert api.iniciar_actualizacion_automatica() == {"estado": "no_aplica"}
 
 
-def test_cerrar_desde_api_sale_de_pichoni():
+def test_cerrar_desde_api_oculta_pichoni_en_bandeja():
     api = Api(None)
     bandeja = Mock()
     api._bandeja = bandeja
 
     api.cerrar()
 
-    bandeja.salir.assert_called_once_with()
+    bandeja.ocultar.assert_called_once_with()
 
 
 def test_cerrar_desde_api_destruye_ventana_si_no_hay_bandeja():
@@ -195,17 +285,31 @@ def test_salir_desde_bandeja_cierra_app_y_es_idempotente():
     bandeja.ventana.destroy.assert_called_once_with()
 
 
-def test_cerrar_ventana_programa_salida_real_despues_de_animacion(monkeypatch):
+def test_cerrar_ventana_oculta_pichoni_y_muestra_notificacion():
     bandeja = Bandeja.__new__(Bandeja)
     bandeja.saliendo = False
     bandeja.ventana = Mock()
-    temporizador = Mock()
-    monkeypatch.setattr(app.threading, "Timer", lambda *args: temporizador)
+    bandeja.icono = Mock()
+    bandeja.icono.HAS_NOTIFICATION = True
 
     assert bandeja.al_cerrar() is False
 
-    bandeja.ventana.evaluate_js.assert_called_once()
-    temporizador.start.assert_called_once_with()
+    bandeja.ventana.hide.assert_called_once_with()
+    bandeja.icono.notify.assert_called_once_with(
+        "Pichoni sigue funcionando en segundo plano. Para cerrarlo por completo, elige Salir desde el icono de la bandeja.",
+        "Pichoni",
+    )
+
+
+def test_cerrar_ventana_permita_cierre_real_al_salir_desde_bandeja():
+    bandeja = Bandeja.__new__(Bandeja)
+    bandeja.saliendo = True
+    bandeja.ventana = Mock()
+    bandeja.icono = Mock()
+
+    assert bandeja.al_cerrar() is True
+
+    bandeja.ventana.hide.assert_not_called()
 
 
 def test_comprobar_actualizacion_expone_digest_y_tamano_del_instalador(monkeypatch):

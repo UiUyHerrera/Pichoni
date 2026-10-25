@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import shutil
 import sys
 import time
@@ -58,12 +59,20 @@ def config_vacia() -> dict[str, Any]:
     return {
         "version": 1,
         "punto": "online",
+        "modo_conexion": "rpc",
+        "inicio_completado": False,
         "personalizado": {"texto": "", "emoji": ""},
         "perfil_activo": None,
         "perfiles_extra": [],
         "rotar_perfiles": {"activo": False, "ids": [], "minutos": 10},
         "iniciar_con_windows": False,
         "tema": "pichoni",
+        "color_marca": "#280060",
+        "color_botones": "",
+        "color_fondo": "",
+        "color_paneles": "",
+        "color_barra_lateral": "",
+        "color_texto": "",
         "app_id": APP_ID,
         "subidas": {},
         "perfiles": [],
@@ -134,6 +143,14 @@ def normalizar(crudo: Any) -> dict[str, Any]:
     if not isinstance(crudo, dict):
         return config
     config["punto"] = crudo.get("punto") if crudo.get("punto") in PUNTOS else "online"
+    modo_conexion = crudo.get("modo_conexion")
+    config["modo_conexion"] = modo_conexion if modo_conexion in ("rpc", "token") else (
+        "token" if "modo_conexion" not in crudo else "rpc"
+    )
+    config["inicio_completado"] = bool(crudo.get(
+        "inicio_completado",
+        crudo.get("modo_conexion") != "rpc",
+    ))
     personalizado = crudo.get("personalizado") if isinstance(crudo.get("personalizado"), dict) else {}
     config["personalizado"] = {"texto": _texto(personalizado.get("texto")), "emoji": _texto(personalizado.get("emoji"), 16)}
     config["perfiles"] = [normalizar_perfil(p) for p in crudo.get("perfiles", []) if isinstance(p, dict)][:50]
@@ -143,12 +160,17 @@ def normalizar(crudo: Any) -> dict[str, Any]:
     config["perfiles_extra"] = list(dict.fromkeys(i for i in extra if i in ids))
     rotar = crudo.get("rotar_perfiles") if isinstance(crudo.get("rotar_perfiles"), dict) else {}
     config["rotar_perfiles"] = {
-        "activo": bool(rotar.get("activo")),
+        "activo": False,
         "ids": [i for i in rotar.get("ids", []) if i in ids] if isinstance(rotar.get("ids"), list) else [],
         "minutos": _entero(rotar.get("minutos"), MIN_ROTACION_MINUTOS, 1440, 10),
     }
     config["iniciar_con_windows"] = bool(crudo.get("iniciar_con_windows"))
-    config["tema"] = crudo.get("tema") if crudo.get("tema") in ("pichoni", "discord", "claro") else "pichoni"
+    config["tema"] = "pichoni"
+    color_marca = crudo.get("color_marca")
+    config["color_marca"] = color_marca.lower() if isinstance(color_marca, str) and re.fullmatch(r"#[0-9a-fA-F]{6}", color_marca) else "#280060"
+    for clave in ("color_botones", "color_fondo", "color_paneles", "color_barra_lateral", "color_texto"):
+        color = crudo.get(clave)
+        config[clave] = color.lower() if isinstance(color, str) and re.fullmatch(r"#[0-9a-fA-F]{6}", color) else ""
     config["app_id"] = _texto(crudo.get("app_id"), 24) if str(crudo.get("app_id", "")).isdigit() else APP_ID
     subidas = crudo.get("subidas")
     config["subidas"] = {k: v for k, v in subidas.items() if isinstance(k, str) and isinstance(v, str)} if isinstance(subidas, dict) else {}
@@ -157,6 +179,8 @@ def normalizar(crudo: Any) -> dict[str, Any]:
 
 def migrar_estados(viejo: dict[str, Any]) -> dict[str, Any]:
     config = config_vacia()
+    config["modo_conexion"] = "token"
+    config["inicio_completado"] = True
     config["punto"] = viejo.get("punto", "online")
     if str(viejo.get("app_id", "")).isdigit():
         config["app_id"] = viejo["app_id"]
@@ -197,9 +221,8 @@ class Almacen:
             except (OSError, json.JSONDecodeError):
                 pass
         config = config_vacia()
-        ejemplo = perfil_vacio("Mi stream", "transmitiendo")
+        ejemplo = perfil_vacio("Mi juego", "jugando")
         ejemplo["nombre"] = "Minecraft"
-        ejemplo["url"] = "https://twitch.tv/"
         config["perfiles"].append(ejemplo)
         return config
 

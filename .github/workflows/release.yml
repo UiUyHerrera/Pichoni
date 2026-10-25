@@ -21,9 +21,9 @@ jobs:
         env:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          $tagMatch = [regex]::Match($env:RELEASE_TAG, '^v(\d+\.\d+\.\d+)$')
+          $tagMatch = [regex]::Match($env:RELEASE_TAG, '^v(\d+\.\d+\.\d+)(?:-rc\.\d+)?$')
           if (-not $tagMatch.Success) {
-            throw "Release tags must use vMAJOR.MINOR.PATCH."
+            throw "Release tags must use vMAJOR.MINOR.PATCH or vMAJOR.MINOR.PATCH-rc.N."
           }
           $version = $tagMatch.Groups[1].Value
           $file = "nucleo/version.py"
@@ -44,9 +44,9 @@ jobs:
         env:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          $tagMatch = [regex]::Match($env:RELEASE_TAG, '^v(\d+\.\d+\.\d+)$')
+          $tagMatch = [regex]::Match($env:RELEASE_TAG, '^v(\d+\.\d+\.\d+)(?:-rc\.\d+)?$')
           if (-not $tagMatch.Success) {
-            throw "Release tags must use vMAJOR.MINOR.PATCH."
+            throw "Release tags must use vMAJOR.MINOR.PATCH or vMAJOR.MINOR.PATCH-rc.N."
           }
           $version = $tagMatch.Groups[1].Value
           $compiler = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
@@ -64,4 +64,6 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
+          prerelease: ${{ contains(github.ref_name, '-rc.') }}
+          make_latest: ${{ !contains(github.ref_name, '-rc.') }}
           files: dist/Pichoni-Setup-*.exe

@@ -1,7 +1,6 @@
 from typing import Any
 
-from .actividad import MAX_ACTIVIDADES, Resolver, construir, personalizado, rota, url_stream
-from .config import MIN_ROTACION_MINUTOS, MIN_ROTACION_SEGUNDOS
+from .actividad import MAX_ACTIVIDADES, Resolver, construir, personalizado, url_stream
 
 
 def buscar(config: dict[str, Any], perfil_id: str | None) -> dict[str, Any] | None:
@@ -13,41 +12,18 @@ class Motor:
         self.perfil_id: str | None = None
         self.indice = 0
         self.inicio = 0.0
-        self.ultimo_texto = 0.0
-        self.ultimo_perfil = 0.0
         self.actividades_omitidas = 0
 
     def activar(self, perfil_id: str | None, ahora: float) -> None:
         self.perfil_id = perfil_id
         self.indice = 0
         self.inicio = ahora
-        self.ultimo_texto = ahora
-        self.ultimo_perfil = ahora
 
     def paso(self, config: dict[str, Any], ahora: float) -> bool:
-        cambio = False
-        rotar = config["rotar_perfiles"]
-        ids = [i for i in rotar["ids"] if buscar(config, i)]
-        if rotar["activo"] and ids and config["perfil_activo"] is not None:
-            intervalo = max(rotar["minutos"], MIN_ROTACION_MINUTOS) * 60
-            if config["perfil_activo"] not in ids:
-                config["perfil_activo"] = ids[0]
-                cambio = True
-            elif len(ids) > 1 and ahora - self.ultimo_perfil >= intervalo:
-                siguiente = (ids.index(config["perfil_activo"]) + 1) % len(ids)
-                config["perfil_activo"] = ids[siguiente]
-                cambio = True
         if config["perfil_activo"] != self.perfil_id:
             self.activar(config["perfil_activo"], ahora)
             return True
-        rotan = [p for p in self.mostrados(config) if rota(p)]
-        if rotan:
-            intervalo = max(rotan[0]["rotar_cada"], MIN_ROTACION_SEGUNDOS)
-            if ahora - self.ultimo_texto >= intervalo:
-                self.indice += 1
-                self.ultimo_texto = ahora
-                cambio = True
-        return cambio
+        return False
 
     def actividades(self, config: dict[str, Any], resolver: Resolver) -> list[dict[str, Any]]:
         propio = personalizado(config["personalizado"])
