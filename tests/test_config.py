@@ -1,4 +1,4 @@
-from nucleo.config import config_vacia, normalizar
+from nucleo.config import MAX_TIEMPO_MINUTOS, config_vacia, normalizar, perfil_vacio
 from nucleo.version import es_version_nueva
 
 
@@ -16,3 +16,31 @@ def test_compara_versiones_de_actualizacion():
     assert es_version_nueva("v2.0.0", "1.9.9")
     assert not es_version_nueva("1.0.0", "1.0.0")
     assert not es_version_nueva("version-invalida", "1.0.0")
+
+
+def test_tiempo_configurado_admite_hasta_444_anios():
+    perfil = perfil_vacio()
+    perfil["tiempo"] = {
+        "modo": "fingido",
+        "minutos": 444 * 525_600,
+        "total": 444 * 525_600,
+    }
+
+    normalizado = normalizar({"perfiles": [perfil]})["perfiles"][0]["tiempo"]
+
+    assert normalizado["minutos"] == MAX_TIEMPO_MINUTOS
+    assert normalizado["total"] == MAX_TIEMPO_MINUTOS
+
+
+def test_tiempo_configurado_no_supera_444_anios():
+    perfil = perfil_vacio()
+    perfil["tiempo"] = {
+        "modo": "fingido",
+        "minutos": 445 * 525_600,
+        "total": 445 * 525_600,
+    }
+
+    normalizado = normalizar({"perfiles": [perfil]})["perfiles"][0]["tiempo"]
+
+    assert normalizado["minutos"] == MAX_TIEMPO_MINUTOS
+    assert normalizado["total"] == MAX_TIEMPO_MINUTOS

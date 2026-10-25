@@ -57,6 +57,19 @@ def test_tiempos():
     assert construir(perfil(tiempo={"modo": "regresiva", "minutos": 2}), 0, 5000, "1", resolver)["timestamps"] == {"end": 125000}
 
 
+def test_tiempo_fake_de_444_anios_envia_timestamp_unix_negativo():
+    actividad = construir(
+        perfil(tiempo={"modo": "fingido", "minutos": 444 * 525_600}),
+        0,
+        1_800_000_000_000,
+        "1",
+        resolver,
+    )
+
+    assert actividad["timestamps"]["start"] == 1_800_000_000_000 - 444 * 525_600 * 60_000
+    assert actividad["timestamps"]["start"] < 0
+
+
 def test_transmision_no_envia_tiempos_manuales():
     p = perfil(tipo="transmitiendo", tiempo={"modo": "regresiva", "minutos": 2})
     assert "timestamps" not in construir(p, 0, 5000, "1", resolver)

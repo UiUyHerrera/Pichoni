@@ -1,6 +1,6 @@
 import re
 
-VERSION = "1.0.3"
+VERSION = "1.0.4"
 REPOSITORIO = "UiUyHerrera/Pichoni"
 PAGINA_VERSIONES = f"https://github.com/{REPOSITORIO}/releases"
 

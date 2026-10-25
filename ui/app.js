@@ -16,6 +16,7 @@
   ];
   const MAX_TEXTO = 128;
   const MAX_ACTIVIDADES = 5;
+  const MAX_TIEMPO_MINUTOS = 444 * 525600;
   const TEMAS = [
     ["pichoni", "Pichoni", "#8b5cf6"],
     ["discord", "Discord", "#5865f2"],
@@ -234,14 +235,18 @@
   }
 
   // Steppers for years, days, hours and minutes, all editing one value stored in minutes.
-  const UNIDADES = [["anios", 525600, 99, "años"], ["dias", 1440, 364, "d"], ["horas", 60, 23, "h"], ["mins", 1, 59, "min"]];
+  const UNIDADES = [["anios", 525600, 444, "años"], ["dias", 1440, 364, "d"], ["horas", 60, 23, "h"], ["mins", 1, 59, "min"]];
 
   function horasMinutos(prefijo, total, alCambiar) {
-    let valor = total;
-    const parte = (tam, max) => Math.min(max, Math.floor(valor / tam) % (tam === 525600 ? 100 : max + 1));
+    let valor = Math.min(total, MAX_TIEMPO_MINUTOS);
+    const parte = (tam, max) => Math.min(max, Math.floor(valor / tam) % (max + 1));
     return UNIDADES.map(([clave, tam, max, unidad]) => paso(prefijo + "-" + clave, parte(tam, max), 0, max, unidad, (n) => {
-      valor = Math.max(1, valor - parte(tam, max) * tam + n * tam);
+      valor = Math.min(MAX_TIEMPO_MINUTOS, Math.max(1, valor - parte(tam, max) * tam + n * tam));
       alCambiar(valor);
+      for (const [unidadClave, unidadTam, unidadMax] of UNIDADES) {
+        const input = document.getElementById(prefijo + "-" + unidadClave);
+        if (input) input.value = parte(unidadTam, unidadMax);
+      }
     }));
   }
 

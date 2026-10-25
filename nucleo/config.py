@@ -12,6 +12,7 @@ TIPOS = {"jugando": 0, "transmitiendo": 1, "escuchando": 2, "viendo": 3, "compit
 PUNTOS = ("online", "idle", "dnd", "invisible")
 MIN_ROTACION_SEGUNDOS = 15
 MIN_ROTACION_MINUTOS = 1
+MAX_TIEMPO_MINUTOS = 444 * 525_600
 
 
 def carpeta_datos() -> Path:
@@ -112,8 +113,8 @@ def normalizar_perfil(crudo: Any) -> dict[str, Any]:
         modo = "ninguno"
     perfil["tiempo"] = {
         "modo": modo,
-        "minutos": _entero(tiempo.get("minutos"), 1, 52_560_000, 30),
-        "total": _entero(tiempo.get("total"), 1, 52_560_000, 60),
+        "minutos": _entero(tiempo.get("minutos"), 1, MAX_TIEMPO_MINUTOS, 30),
+        "total": _entero(tiempo.get("total"), 1, MAX_TIEMPO_MINUTOS, 60),
     }
     return perfil
 
