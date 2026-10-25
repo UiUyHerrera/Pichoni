@@ -1,4 +1,4 @@
-from nucleo.config import MAX_TIEMPO_MINUTOS, config_vacia, normalizar, perfil_vacio
+from nucleo.config import MAX_TIEMPO_MINUTOS, config_vacia, limite_tiempo_minutos, normalizar, perfil_vacio
 from nucleo.version import es_version_nueva
 
 
@@ -18,7 +18,7 @@ def test_compara_versiones_de_actualizacion():
     assert not es_version_nueva("version-invalida", "1.0.0")
 
 
-def test_tiempo_configurado_admite_hasta_444_anios():
+def test_tiempo_configurado_se_limita_a_timestamps_unix_validos():
     perfil = perfil_vacio()
     perfil["tiempo"] = {
         "modo": "fingido",
@@ -28,11 +28,24 @@ def test_tiempo_configurado_admite_hasta_444_anios():
 
     normalizado = normalizar({"perfiles": [perfil]})["perfiles"][0]["tiempo"]
 
-    assert normalizado["minutos"] == MAX_TIEMPO_MINUTOS
+    assert normalizado["minutos"] == limite_tiempo_minutos()
     assert normalizado["total"] == MAX_TIEMPO_MINUTOS
 
 
-def test_tiempo_configurado_no_supera_444_anios():
+def test_limite_del_fake_time_es_la_epoca_unix_actual():
+    assert 0 < limite_tiempo_minutos(1_800_000_000) <= MAX_TIEMPO_MINUTOS
+
+
+def test_duracion_regresiva_puede_superar_la_epoca_unix():
+    perfil = perfil_vacio()
+    perfil["tiempo"] = {"modo": "regresiva", "minutos": 444 * 525_600}
+
+    normalizado = normalizar({"perfiles": [perfil]})["perfiles"][0]["tiempo"]
+
+    assert normalizado["minutos"] == MAX_TIEMPO_MINUTOS
+
+
+def test_tiempo_configurado_no_supera_el_timestamp_unix_actual():
     perfil = perfil_vacio()
     perfil["tiempo"] = {
         "modo": "fingido",
@@ -42,5 +55,5 @@ def test_tiempo_configurado_no_supera_444_anios():
 
     normalizado = normalizar({"perfiles": [perfil]})["perfiles"][0]["tiempo"]
 
-    assert normalizado["minutos"] == MAX_TIEMPO_MINUTOS
+    assert normalizado["minutos"] == limite_tiempo_minutos()
     assert normalizado["total"] == MAX_TIEMPO_MINUTOS

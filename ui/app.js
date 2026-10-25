@@ -237,17 +237,20 @@
   // Steppers for years, days, hours and minutes, all editing one value stored in minutes.
   const UNIDADES = [["anios", 525600, 444, "años"], ["dias", 1440, 364, "d"], ["horas", 60, 23, "h"], ["mins", 1, 59, "min"]];
 
-  function horasMinutos(prefijo, total, alCambiar) {
-    let valor = Math.min(total, MAX_TIEMPO_MINUTOS);
+  function horasMinutos(prefijo, total, limite, alCambiar) {
+    let valor = Math.min(total, limite);
     const parte = (tam, max) => Math.min(max, Math.floor(valor / tam) % (max + 1));
-    return UNIDADES.map(([clave, tam, max, unidad]) => paso(prefijo + "-" + clave, parte(tam, max), 0, max, unidad, (n) => {
-      valor = Math.min(MAX_TIEMPO_MINUTOS, Math.max(1, valor - parte(tam, max) * tam + n * tam));
-      alCambiar(valor);
-      for (const [unidadClave, unidadTam, unidadMax] of UNIDADES) {
-        const input = document.getElementById(prefijo + "-" + unidadClave);
-        if (input) input.value = parte(unidadTam, unidadMax);
-      }
-    }));
+    return UNIDADES.map(([clave, tam, max, unidad]) => {
+      const maximo = tam === 525600 ? Math.min(max, Math.floor(limite / tam)) : max;
+      return paso(prefijo + "-" + clave, parte(tam, max), 0, maximo, unidad, (n) => {
+        valor = Math.min(limite, Math.max(1, valor - parte(tam, max) * tam + n * tam));
+        alCambiar(valor);
+        for (const [unidadClave, unidadTam, unidadMax] of UNIDADES) {
+          const input = document.getElementById(prefijo + "-" + unidadClave);
+          if (input) input.value = parte(unidadTam, unidadTam === 525600 ? Math.min(unidadMax, Math.floor(limite / unidadTam)) : unidadMax);
+        }
+      });
+    });
   }
 
   function paso(id, valor, min, max, unidad, alCambiar) {
@@ -367,6 +370,8 @@
   }
 
   function vistaPerfil(p) {
+    const inicioTiempo = encendido(p.id) && estado && estado.inicio ? estado.inicio * 1000 : Date.now();
+    const limiteTiempo = Math.min(MAX_TIEMPO_MINUTOS, Math.max(1, Math.floor(inicioTiempo / 60000)));
     const titulo = h("input", {
       class: "titulo-editable",
       value: p.titulo,
@@ -451,15 +456,15 @@
       }, true)),
       p.tiempo.modo === "fingido" || p.tiempo.modo === "progreso" ? h("div", { class: "fila" },
         h("label", { for: "f-horas", text: p.tiempo.modo === "progreso" ? "Ya van" : "Ya llevas" }),
-        ...horasMinutos("f", p.tiempo.minutos, (n) => { p.tiempo.minutos = n; cambio(); })
+        ...horasMinutos("f", p.tiempo.minutos, limiteTiempo, (n) => { p.tiempo.minutos = n; cambio(); })
       ) : null,
       p.tiempo.modo === "progreso" ? h("div", { class: "fila" },
         h("label", { for: "t-horas", text: "Dura en total" }),
-        ...horasMinutos("t", p.tiempo.total, (n) => { p.tiempo.total = n; cambio(); })
+        ...horasMinutos("t", p.tiempo.total, MAX_TIEMPO_MINUTOS, (n) => { p.tiempo.total = n; cambio(); })
       ) : null,
       p.tiempo.modo === "regresiva" ? h("div", { class: "fila" },
         h("label", { for: "f-horas", text: "Duración" }),
-        ...horasMinutos("f", p.tiempo.minutos, (n) => { p.tiempo.minutos = n; cambio(); })
+        ...horasMinutos("f", p.tiempo.minutos, MAX_TIEMPO_MINUTOS, (n) => { p.tiempo.minutos = n; cambio(); })
       ) : null
     );
 
@@ -727,12 +732,16 @@
     const inicio = activo && estado && estado.inicio ? estado.inicio * 1000 : Date.now();
     let tiempo = "";
     if (p.tipo !== "transmitiendo" && p.tiempo.modo === "transcurrido") tiempo = formatoTiempo(Date.now() - inicio) + " transcurrido";
-    if (p.tipo !== "transmitiendo" && p.tiempo.modo === "fingido") tiempo = formatoTiempo(Date.now() - inicio + p.tiempo.minutos * 60000) + " transcurrido";
+    if (p.tipo !== "transmitiendo" && p.tiempo.modo === "fingido") {
+      const minutosFake = Math.min(p.tiempo.minutos, Math.floor(inicio / 60000));
+      tiempo = formatoTiempo(Date.now() - inicio + minutosFake * 60000) + " transcurrido";
+    }
     if (p.tipo !== "transmitiendo" && p.tiempo.modo === "regresiva") tiempo = "Quedan " + formatoTiempo(inicio + p.tiempo.minutos * 60000 - Date.now());
     const enBarra = p.tipo !== "transmitiendo" && p.tiempo.modo === "progreso";
     if (enBarra) {
       const total = Math.max(p.tiempo.total, p.tiempo.minutos + 1) * 60000;
-      const va = Math.min(total, Date.now() - inicio + p.tiempo.minutos * 60000);
+      const inicioBarra = Math.max(0, inicio - p.tiempo.minutos * 60000);
+      const va = Math.min(total, Date.now() - inicioBarra);
       tiempo = formatoTiempo(va) + " / " + formatoTiempo(total);
       preview.barra.firstChild.style.width = (va / total * 100).toFixed(2) + "%";
     }

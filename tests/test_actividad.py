@@ -57,7 +57,7 @@ def test_tiempos():
     assert construir(perfil(tiempo={"modo": "regresiva", "minutos": 2}), 0, 5000, "1", resolver)["timestamps"] == {"end": 125000}
 
 
-def test_tiempo_fake_de_444_anios_envia_timestamp_unix_negativo():
+def test_tiempo_fake_normalizado_no_produce_timestamp_negativo():
     actividad = construir(
         perfil(tiempo={"modo": "fingido", "minutos": 444 * 525_600}),
         0,
@@ -66,8 +66,29 @@ def test_tiempo_fake_de_444_anios_envia_timestamp_unix_negativo():
         resolver,
     )
 
-    assert actividad["timestamps"]["start"] == 1_800_000_000_000 - 444 * 525_600 * 60_000
-    assert actividad["timestamps"]["start"] < 0
+    assert actividad["timestamps"]["start"] > 0
+
+
+def test_tiempo_fake_no_envia_timestamps_anteriores_a_unix_epoch():
+    p = perfil(tiempo={"modo": "fingido", "minutos": 30})
+    p["tiempo"]["minutos"] = 444 * 525_600
+
+    actividad = construir(p, 0, 1_800_000_000_000, "1", resolver)
+
+    assert actividad["timestamps"]["start"] == 0
+
+
+def test_tiempo_fake_de_un_anio_conserva_timestamp_valido():
+    actividad = construir(
+        perfil(tiempo={"modo": "fingido", "minutos": 525_600}),
+        0,
+        1_800_000_000_000,
+        "1",
+        resolver,
+    )
+
+    assert actividad["timestamps"]["start"] == 1_768_464_000_000
+    assert actividad["timestamps"]["start"] > 0
 
 
 def test_transmision_no_envia_tiempos_manuales():

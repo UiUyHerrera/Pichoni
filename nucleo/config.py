@@ -2,6 +2,7 @@ import json
 import os
 import shutil
 import sys
+import time
 import uuid
 from copy import deepcopy
 from pathlib import Path
@@ -13,6 +14,10 @@ PUNTOS = ("online", "idle", "dnd", "invisible")
 MIN_ROTACION_SEGUNDOS = 15
 MIN_ROTACION_MINUTOS = 1
 MAX_TIEMPO_MINUTOS = 444 * 525_600
+
+
+def limite_tiempo_minutos(ahora: float | None = None) -> int:
+    return min(MAX_TIEMPO_MINUTOS, max(1, int((ahora if ahora is not None else time.time()) // 60)))
 
 
 def carpeta_datos() -> Path:
@@ -113,7 +118,12 @@ def normalizar_perfil(crudo: Any) -> dict[str, Any]:
         modo = "ninguno"
     perfil["tiempo"] = {
         "modo": modo,
-        "minutos": _entero(tiempo.get("minutos"), 1, MAX_TIEMPO_MINUTOS, 30),
+        "minutos": _entero(
+            tiempo.get("minutos"),
+            1,
+            limite_tiempo_minutos() if modo in ("fingido", "progreso") else MAX_TIEMPO_MINUTOS,
+            30,
+        ),
         "total": _entero(tiempo.get("total"), 1, MAX_TIEMPO_MINUTOS, 60),
     }
     return perfil

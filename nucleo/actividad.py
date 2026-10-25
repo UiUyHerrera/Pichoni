@@ -72,9 +72,9 @@ def construir(perfil: dict[str, Any], indice: int, inicio_ms: int, app_id: str, 
     if modo == "transcurrido":
         actividad["timestamps"] = {"start": inicio_ms}
     elif modo == "fingido":
-        actividad["timestamps"] = {"start": inicio_ms - perfil["tiempo"]["minutos"] * 60_000}
+        actividad["timestamps"] = {"start": max(0, inicio_ms - perfil["tiempo"]["minutos"] * 60_000)}
     elif modo == "progreso":
-        inicio = inicio_ms - perfil["tiempo"]["minutos"] * 60_000
+        inicio = max(0, inicio_ms - perfil["tiempo"]["minutos"] * 60_000)
         total = max(perfil["tiempo"]["total"], perfil["tiempo"]["minutos"] + 1)
         actividad["timestamps"] = {"start": inicio, "end": inicio + total * 60_000}
     elif modo == "regresiva":
