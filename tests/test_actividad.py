@@ -34,6 +34,33 @@ def test_stream_solo_usa_un_enlace_valido():
     assert "url" not in construir(perfil(tipo="transmitiendo", url="https://aimgearz.cl/"), 0, 0, "1", resolver)
 
 
+def test_stream_lleva_app_id_aunque_no_tenga_botones():
+    assert construir(perfil(tipo="transmitiendo", url="https://twitch.tv/x"), 0, 0, "999", resolver)["application_id"] == "999"
+
+
+def test_personalizacion_extra_se_envia():
+    p = perfil(
+        detalles=["Nivel 5"], texto=["En partida"],
+        detalles_url="https://a.com", texto_url="https://b.com",
+        mostrar="detalles", grupo={"actual": 2, "maximo": 4},
+        imagen={"url": "https://x.com/a.png", "texto": "", "link": "https://c.com"},
+    )
+    a = construir(p, 0, 0, "1", resolver)
+    assert a["details_url"] == "https://a.com" and a["state_url"] == "https://b.com"
+    assert a["status_display_type"] == 2
+    assert a["party"] == {"id": p["id"], "size": [2, 4]}
+    assert a["assets"]["large_url"] == "https://c.com"
+
+
+def test_personalizacion_extra_invalida_no_se_envia():
+    p = perfil(detalles_url="https://a.com", mostrar="otro", grupo={"actual": 9, "maximo": 3},
+               imagen={"url": "https://x.com/a.png", "texto": "", "link": "nada"})
+    a = construir(p, 0, 0, "1", resolver)
+    assert "details_url" not in a and "status_display_type" not in a
+    assert a["party"]["size"] == [3, 3]
+    assert "large_url" not in a["assets"]
+
+
 def test_imagenes_y_botones_llevan_app_id():
     p = perfil(
         imagen={"url": "https://x.com/a.png", "texto": "hola"},
@@ -122,5 +149,5 @@ def test_migrar_estados_viejos():
     c = migrar_estados(viejo)
     activo = next(p for p in c["perfiles"] if p["id"] == c["perfil_activo"])
     assert c["punto"] == "dnd" and c["app_id"] == "123"
-    assert activo["tipo"] == "transmitiendo" and activo["imagen"] == {"url": "https://i/a.png", "texto": "f"}
+    assert activo["tipo"] == "transmitiendo" and activo["imagen"] == {"url": "https://i/a.png", "texto": "f", "link": ""}
     assert len(c["perfiles"]) == 2

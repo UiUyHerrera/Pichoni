@@ -41,8 +41,13 @@ class Motor:
         self.actividades_omitidas = solicitados_validos - len(seleccionados)
         lista = [propio] if propio else []
         con_id = False
+        nombres: set[str] = set()
         for perfil in seleccionados:
             actividad = construir(perfil, self.indice, int(self.inicio * 1000), config["app_id"], resolver)
+            # Discord hides activities that repeat a name, so repeats get invisible filler characters.
+            while actividad["name"] in nombres:
+                actividad["name"] += "ㅤ"
+            nombres.add(actividad["name"])
             # The profile shows one activity per application ID, so only the first keeps it (and its buttons).
             if "application_id" in actividad:
                 if con_id:

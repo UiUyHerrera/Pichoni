@@ -91,7 +91,18 @@ def test_perfiles_con_el_mismo_nombre_y_tipos_distintos_se_muestran():
     c["perfiles_extra"] = ["serie"]
     m = Motor()
     m.paso(c, 0)
-    assert [a["name"] for a in m.actividades(c, lambda u: None)] == ["Compartido", "Compartido"]
+    assert [a["name"] for a in m.actividades(c, lambda u: None)] == ["Compartido", "Compartidoㅤ"]
+
+
+def test_tres_perfiles_con_el_mismo_nombre_salen_con_nombres_distintos():
+    perfiles = [perfil(t) for t in ("jugando", "escuchando", "viendo")]
+    for p in perfiles:
+        p.update({"nombre": "ㅤ", "tipo": p["id"]})
+    c = config_con(*perfiles, activo="jugando")
+    c["perfiles_extra"] = ["escuchando", "viendo"]
+    m = Motor()
+    m.paso(c, 0)
+    assert [a["name"] for a in m.actividades(c, lambda u: None)] == ["ㅤ", "ㅤ" * 2, "ㅤ" * 3]
 
 
 def test_perfil_del_mismo_tipo_no_se_duplica():

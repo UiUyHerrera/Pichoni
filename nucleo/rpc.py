@@ -4,7 +4,7 @@ from collections.abc import Callable
 from copy import deepcopy
 from typing import Any
 
-from pypresence import ActivityType, Presence, PyPresenceException
+from pypresence import ActivityType, Presence, PyPresenceException, StatusDisplayType
 
 
 TIPOS_RPC = {0, 2, 3, 5}
@@ -67,14 +67,21 @@ class ConexionRPC:
         presencia.update(
             name=actividad.get("name"),
             activity_type=ActivityType(actividad["type"]),
+            status_display_type=StatusDisplayType(actividad["status_display_type"]) if "status_display_type" in actividad else None,
             details=actividad.get("details"),
+            details_url=actividad.get("details_url"),
             state=actividad.get("state"),
+            state_url=actividad.get("state_url"),
             start=int(timestamps["start"] / 1000) if timestamps.get("start") else None,
             end=int(timestamps["end"] / 1000) if timestamps.get("end") else None,
             large_image=large_image if isinstance(large_image, str) and not large_image.startswith("mp:") else None,
             large_text=assets.get("large_text"),
+            large_url=assets.get("large_url"),
             small_image=small_image if isinstance(small_image, str) and not small_image.startswith("mp:") else None,
             small_text=assets.get("small_text"),
+            small_url=assets.get("small_url"),
+            party_id=actividad.get("party", {}).get("id"),
+            party_size=actividad.get("party", {}).get("size"),
             buttons=botones or None,
         )
 

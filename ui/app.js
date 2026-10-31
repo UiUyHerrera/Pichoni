@@ -80,9 +80,13 @@
       nombre: "",
       detalles: [""],
       texto: [""],
+      detalles_url: "",
+      texto_url: "",
+      mostrar: "nombre",
+      grupo: { actual: 0, maximo: 0 },
       url: "",
-      imagen: { url: "", texto: "" },
-      imagen_chica: { url: "", texto: "" },
+      imagen: { url: "", texto: "", link: "" },
+      imagen_chica: { url: "", texto: "", link: "" },
       botones: [{ texto: "", url: "" }, { texto: "", url: "" }],
       tiempo: { modo: "ninguno", minutos: 30, total: 60 }
     };
@@ -456,13 +460,29 @@
       })
     );
 
+    const campoNombre = entrada({ id: "f-nombre", value: p.nombre, maxlength: MAX_TEXTO, placeholder: "Minecraft, Spotify, Netflix…" }, (v) => { p.nombre = v; cambio(); pintarPerfiles(); });
     const general = h("div", { class: "grupo" },
       fila(p.tipo === "escuchando" ? "Qué escuchas" : p.tipo === "viendo" ? "Qué ves" : p.tipo === "transmitiendo" ? "Nombre en la lista" : "Nombre",
-        entrada({ id: "f-nombre", value: p.nombre, maxlength: MAX_TEXTO, placeholder: "Minecraft, Spotify, Netflix…" }, (v) => { p.nombre = v; cambio(); pintarPerfiles(); }),
+        [campoNombre, h("button", {
+          type: "button",
+          class: "btn",
+          title: "Poner un nombre invisible",
+          onclick: () => { campoNombre.value = p.nombre = "ㅤ"; cambio(); pintarPerfiles(); }
+        }, "Invisible")],
         "f-nombre"),
       p.tipo === "transmitiendo" ? fila("Link del stream (destino de “Ver”)",
         entrada({ id: "f-url", type: "url", value: p.url, maxlength: 512, placeholder: "https://twitch.tv/tucanal" }, (v) => { p.url = v; cambio(); avisoStream(p); }),
-        "f-url") : null
+        "f-url") : null,
+      fila("Se ve en la lista", segmentado([["nombre", "Nombre"], ["detalles", "Primera línea"], ["estado", "Segunda línea"]], p.mostrar, "Se ve en la lista", (v) => {
+        p.mostrar = v;
+        guardarPronto();
+        pintarContenido();
+      })),
+      h("div", { class: "fila" },
+        h("label", { for: "g-actual", text: "Grupo" }),
+        paso("g-actual", p.grupo.actual, 0, 99, "de", (n) => { p.grupo.actual = Math.min(n, p.grupo.maximo); cambio(); pintarContenido(); }),
+        paso("g-maximo", p.grupo.maximo, 0, 99, "(0 = sin grupo)", (n) => { p.grupo.maximo = n; p.grupo.actual = Math.min(p.grupo.actual, n); cambio(); pintarContenido(); })
+      )
     );
     const aviso = h("p", { class: "seccion-pie aviso-stream hidden", id: "aviso-stream", role: "status" },
       "Discord agrega el botón “Ver” automáticamente para las actividades Transmitiendo.");
@@ -544,6 +564,10 @@
         }),
         cuenta
       ));
+      const claveUrl = clave + "_url";
+      partes.push(fila("Link al hacer clic",
+        entrada({ id: "t-" + claveUrl, type: "url", value: p[claveUrl], maxlength: 512, placeholder: "Opcional: https://…" }, (v) => { p[claveUrl] = v.trim(); cambio(); }),
+        "t-" + claveUrl));
     });
     return partes;
   }
@@ -825,7 +849,9 @@
       h("div", { class: "zona-acciones" }, h("button", { type: "button", class: "btn", onclick: elegir }, "Elegir…"), quitar),
       h("div", { class: "fila" }, h("label", { for: "img-" + clave, text: "Link" }), linkInput),
       h("div", { class: "fila" }, h("label", { for: "txt-" + clave, text: "Texto" }),
-        entrada({ id: "txt-" + clave, value: datos.texto, maxlength: MAX_TEXTO, placeholder: "Al pasar el mouse" }, (v) => { datos.texto = v; cambio(); }))
+        entrada({ id: "txt-" + clave, value: datos.texto, maxlength: MAX_TEXTO, placeholder: "Al pasar el mouse" }, (v) => { datos.texto = v; cambio(); })),
+      h("div", { class: "fila" }, h("label", { for: "abre-" + clave, text: "Al hacer clic" }),
+        entrada({ id: "abre-" + clave, type: "url", value: datos.link, maxlength: 512, placeholder: "Opcional: https://…" }, (v) => { datos.link = v.trim(); cambio(); }))
     );
     pintarSoltar();
     return zona;

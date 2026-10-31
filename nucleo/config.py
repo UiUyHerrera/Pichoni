@@ -11,6 +11,7 @@ from typing import Any
 
 APP_ID = "383226320970055681"
 TIPOS = {"jugando": 0, "transmitiendo": 1, "escuchando": 2, "viendo": 3, "compitiendo": 5}
+MOSTRAR = {"nombre": 0, "estado": 1, "detalles": 2}
 PUNTOS = ("online", "idle", "dnd", "invisible")
 MIN_ROTACION_SEGUNDOS = 15
 MIN_ROTACION_MINUTOS = 1
@@ -46,10 +47,14 @@ def perfil_vacio(titulo: str = "Nuevo perfil", tipo: str = "jugando") -> dict[st
         "nombre": "",
         "detalles": [""],
         "texto": [""],
+        "detalles_url": "",
+        "texto_url": "",
+        "mostrar": "nombre",
+        "grupo": {"actual": 0, "maximo": 0},
         "rotar_cada": 30,
         "url": "",
-        "imagen": {"url": "", "texto": ""},
-        "imagen_chica": {"url": "", "texto": ""},
+        "imagen": {"url": "", "texto": "", "link": ""},
+        "imagen_chica": {"url": "", "texto": "", "link": ""},
         "botones": [{"texto": "", "url": ""}, {"texto": "", "url": ""}],
         "tiempo": {"modo": "ninguno", "minutos": 30, "total": 60},
     }
@@ -111,11 +116,17 @@ def normalizar_perfil(crudo: Any) -> dict[str, Any]:
     perfil["nombre"] = _texto(crudo.get("nombre"))
     perfil["detalles"] = _lista(crudo.get("detalles"))
     perfil["texto"] = _lista(crudo.get("texto"))
+    perfil["detalles_url"] = _texto(crudo.get("detalles_url"), 512)
+    perfil["texto_url"] = _texto(crudo.get("texto_url"), 512)
+    perfil["mostrar"] = crudo.get("mostrar") if crudo.get("mostrar") in MOSTRAR else "nombre"
+    grupo = crudo.get("grupo") if isinstance(crudo.get("grupo"), dict) else {}
+    maximo = _entero(grupo.get("maximo"), 0, 99, 0)
+    perfil["grupo"] = {"actual": _entero(grupo.get("actual"), 0, maximo, 0), "maximo": maximo}
     perfil["rotar_cada"] = _entero(crudo.get("rotar_cada"), MIN_ROTACION_SEGUNDOS, 3600, 30)
     perfil["url"] = _texto(crudo.get("url"), 512)
     for clave in ("imagen", "imagen_chica"):
         valor = crudo.get(clave) if isinstance(crudo.get(clave), dict) else {}
-        perfil[clave] = {"url": _texto(valor.get("url"), 1024), "texto": _texto(valor.get("texto"))}
+        perfil[clave] = {"url": _texto(valor.get("url"), 1024), "texto": _texto(valor.get("texto")), "link": _texto(valor.get("link"), 512)}
     botones = crudo.get("botones") if isinstance(crudo.get("botones"), list) else []
     perfil["botones"] = [
         {"texto": _texto(b.get("texto"), 32), "url": _texto(b.get("url"), 512)} if isinstance(b, dict) else {"texto": "", "url": ""}
