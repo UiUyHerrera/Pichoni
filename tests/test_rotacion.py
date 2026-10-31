@@ -140,5 +140,33 @@ def test_estado_personalizado_reserva_uno_de_los_cinco_espacios():
     c["personalizado"] = {"texto": "Hola", "emoji": ""}
     m = Motor()
     m.paso(c, 0)
-    assert [a["type"] for a in m.actividades(c, lambda u: None)] == [4, 0, 1, 2, 3]
+    assert [a["type"] for a in m.actividades(c, lambda u: None)] == [4, 1, 0, 2, 3]
     assert m.actividades_omitidas == 1
+
+
+def test_stream_sumado_va_primero_para_que_el_perfil_lo_muestre():
+    jugando = perfil("juego")
+    jugando["tipo"] = "jugando"
+    stream = perfil("stream")
+    stream.update({"tipo": "transmitiendo", "url": "https://twitch.tv/canal"})
+    c = config_con(jugando, stream, activo="juego")
+    c["perfiles_extra"] = ["stream"]
+    m = Motor()
+    m.paso(c, 0)
+    assert [a["type"] for a in m.actividades(c, lambda u: None)] == [1, 0]
+
+
+def test_solo_el_stream_conserva_el_application_id_si_otro_perfil_tiene_botones():
+    compitiendo = perfil("torneo")
+    compitiendo.update({"tipo": "compitiendo", "botones": [{"texto": "Ir", "url": "https://a.com"}]})
+    stream = perfil("stream")
+    stream.update({"tipo": "transmitiendo", "url": "https://twitch.tv/canal",
+                   "botones": [{"texto": "Canal", "url": "https://b.com"}]})
+    c = config_con(compitiendo, stream, activo="torneo")
+    c["perfiles_extra"] = ["stream"]
+    m = Motor()
+    m.paso(c, 0)
+    acts = m.actividades(c, lambda u: None)
+    assert [a["type"] for a in acts] == [1, 5]
+    assert "application_id" in acts[0] and acts[0]["buttons"] == ["Canal"]
+    assert not {"application_id", "buttons", "metadata"} & acts[1].keys()

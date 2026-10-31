@@ -30,7 +30,8 @@ class Motor:
         mostrados = self.mostrados(config)
         solicitados = [p for p in mostrados if p["tipo"] != "transmitiendo" or url_stream(p["url"])]
         limite_perfiles = MAX_ACTIVIDADES - (1 if propio else 0)
-        seleccionados = solicitados[:limite_perfiles]
+        # The stream goes first so it is the one that keeps the application ID (see below).
+        seleccionados = sorted(solicitados[:limite_perfiles], key=lambda p: p["tipo"] != "transmitiendo")
         ids_solicitados = list(dict.fromkeys(
             [self.perfil_id] + [
                 i for i in config.get("perfiles_extra", []) if i != self.perfil_id
@@ -39,8 +40,16 @@ class Motor:
         solicitados_validos = sum(buscar(config, i) is not None for i in ids_solicitados)
         self.actividades_omitidas = solicitados_validos - len(seleccionados)
         lista = [propio] if propio else []
+        con_id = False
         for perfil in seleccionados:
-            lista.append(construir(perfil, self.indice, int(self.inicio * 1000), config["app_id"], resolver))
+            actividad = construir(perfil, self.indice, int(self.inicio * 1000), config["app_id"], resolver)
+            # The profile shows one activity per application ID, so only the first keeps it (and its buttons).
+            if "application_id" in actividad:
+                if con_id:
+                    for clave in ("application_id", "buttons", "metadata"):
+                        actividad.pop(clave)
+                con_id = True
+            lista.append(actividad)
         return lista
 
     def mostrados(self, config: dict[str, Any]) -> list[dict[str, Any]]:
